@@ -5,3 +5,4 @@ dist
 *.log
 eval/fixtures/
 eval/results/
+.DS_Store
