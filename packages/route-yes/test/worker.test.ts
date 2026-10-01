@@ -38,7 +38,7 @@ const nav = (path: string, init: RequestInit = {}) =>
 describe("withRouteYes", () => {
   it("redirects static-site 404s using the manifest from ASSETS", async () => {
     const e = env({ "/about": 0.9, [NONE]: 0.1 });
-    const res = await withRouteYes(undefined, { cacheTtl: 0 }).fetch(nav("/abuot?utm=1"), e, ctx);
+    const res = await withRouteYes(undefined, { cacheTtl: 0 }).fetch(nav("/company?utm=1"), e, ctx);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/about?utm=1");
     expect(res.headers.get("x-route-yes")).toContain("ai;");
@@ -68,7 +68,7 @@ describe("withRouteYes", () => {
     const e = env({});
     e.AI.run.mockRejectedValueOnce(new Error("boom"));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const res = await withRouteYes(undefined, { manifest, cacheTtl: 0 }).fetch(nav("/abuot"), e, ctx);
+    const res = await withRouteYes(undefined, { manifest, cacheTtl: 0 }).fetch(nav("/company"), e, ctx);
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("<h1>Not found</h1>");
   });

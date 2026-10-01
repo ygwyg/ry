@@ -3,3 +3,5 @@ dist
 .wrangler
 .dev.vars
 *.log
+eval/fixtures/
+eval/results/

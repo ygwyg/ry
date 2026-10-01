@@ -1,6 +1,8 @@
-import { findNormalizedMatch, prefilter, skipReason } from "./match.js";
+import { findNormalizedMatch, findTypoMatch, skipReason } from "./match.js";
+import { humanizePath, shortlist } from "./shortlist.js";
 import type {
   AiLike,
+  ClefModel,
   Decision,
   Manifest,
   ResolveOptions,
@@ -20,6 +22,7 @@ const DEFAULTS = {
   minHumanLikelihood: 0.5,
   maxCandidates: 60,
   maxSuggestions: 3,
+  rerankSize: 5,
 } as const;
 
 /** Build the Clef request body for a missing path. Exported for testing and debugging. */
@@ -29,8 +32,19 @@ export function buildClefInput(
   opts: ResolveOptions = {},
 ) {
   const criteria: Record<string, string | null> = {};
+  // Pages often share generic titles ("Pricing", "Limits"). Name the section
+  // each one lives in so Clef can tell them apart.
+  const titleCounts = new Map<string, number>();
   for (const r of candidates) {
-    const text = [r.title, r.description].filter(Boolean).join(" — ");
+    if (r.title) titleCounts.set(r.title, (titleCounts.get(r.title) ?? 0) + 1);
+  }
+  for (const r of candidates) {
+    let title = r.title;
+    if (title && opts.disambiguateTitles !== false && titleCounts.get(title)! > 1) {
+      const section = humanizePath(r.path.replace(/\/+$/, "").split("/").slice(0, -1).join("/"));
+      if (section) title = `${title} (${section})`;
+    }
+    const text = [title, r.description].filter(Boolean).join(" — ");
     criteria[r.path] = text || null;
   }
   criteria[NONE] =
@@ -68,16 +82,26 @@ export function buildClefInput(
   };
 }
 
+interface ClefChoice {
+  choice: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+}
+
 interface ClefOutput {
-  answers: {
-    destination?: {
-      choice: string;
-      probabilities: Record<string, number>;
-      confidence: number;
-    };
-    human?: { noul: number };
-  };
-  usage?: { input_tokens: number; output_tokens: number };
+  answers: { destination?: ClefChoice; human?: { noul: number } };
+  usage?: Usage;
+}
+
+type Usage = { input_tokens: number; output_tokens: number };
+
+type Judged = Pick<Decision, "kind" | "to" | "confidence" | "humanLikelihood" | "suggestions" | "reason" | "rounds"> & {
+  ranked: [string, number][];
+};
+
+function addUsage(a?: Usage, b?: Usage): Usage | undefined {
+  if (!a || !b) return a ?? b;
+  return { input_tokens: a.input_tokens + b.input_tokens, output_tokens: a.output_tokens + b.output_tokens };
 }
 
 function unwrap(raw: unknown): ClefOutput {
@@ -125,58 +149,91 @@ export async function resolveRoute(
 
   const skip = skipReason(req.path);
   if (skip) return { ...base, kind: "skip", reason: skip };
+
+  if (opts.typoFix !== false) {
+    const typo = findTypoMatch(req.path, routes);
+    if (typo) {
+      return { ...base, kind: "typo", to: withSearch(typo.path, req.search), confidence: 1 };
+    }
+  }
   if (routes.length === 0) return { ...base, kind: "skip", reason: "no routes" };
 
   const limit = Math.min(opts.maxCandidates ?? DEFAULTS.maxCandidates, 254);
-  const candidates = prefilter(req.path, routes, limit);
-  const input = buildClefInput(req, candidates, opts);
-  const model = input.model as Decision["model"];
-  const out = unwrap(await ai.run(`@cf/cloudflare/${model}`, input));
+  const candidates = await shortlist(ai, manifest, req.path, limit, opts);
+  opts.onShortlist?.(candidates);
 
-  const dest = out.answers.destination;
-  const human = out.answers.human?.noul ?? 1;
-  if (!dest) throw new Error("route-yes: Clef returned no destination answer");
-
-  const byPath = new Map(candidates.map((r) => [r.path, r]));
-  const ranked = Object.entries(dest.probabilities)
-    .filter(([id]) => id !== NONE && byPath.has(id))
-    .sort((a, b) => b[1] - a[1]);
-
-  const minHuman = opts.minHumanLikelihood ?? DEFAULTS.minHumanLikelihood;
-  const suggestions: Suggestion[] =
-    human < minHuman
-      ? []
-      : ranked
-          .filter(([, p]) => p >= 0.1)
-          .slice(0, opts.maxSuggestions ?? DEFAULTS.maxSuggestions)
-          .map(([path, probability]) => ({
-            path,
-            title: byPath.get(path)?.title,
-            probability,
-          }));
-
-  const confidence = dest.probabilities[dest.choice] ?? 0;
-  const common = { ...base, humanLikelihood: human, suggestions, model, usage: out.usage };
-
-  if (human < minHuman) {
-    return { ...common, kind: "miss", confidence, reason: "not a person looking for content" };
-  }
-  if (dest.choice === NONE || !byPath.has(dest.choice)) {
-    return { ...common, kind: "miss", confidence, reason: "no plausible match" };
-  }
-  // Confident outright, or a clear winner over the next-best page (the rest of
-  // the probability is on "none", not a rival route).
-  const runnerUp = ranked[1]?.[1] ?? 0;
-  const dominant =
-    confidence >= (opts.minDominantConfidence ?? DEFAULTS.minDominantConfidence) &&
-    confidence >= (opts.dominance ?? DEFAULTS.dominance) * runnerUp;
-  if (confidence < (opts.minConfidence ?? DEFAULTS.minConfidence) && !dominant) {
-    return { ...common, kind: "miss", confidence, reason: "low confidence" };
-  }
-  return {
-    ...common,
-    kind: "ai",
-    to: withSearch(dest.choice, req.search),
-    confidence,
+  const model = (opts.model ?? DEFAULTS.model) as ClefModel;
+  const ask = async (routesToAsk: RouteEntry[]) => {
+    const out = unwrap(await ai.run(`@cf/cloudflare/${model}`, buildClefInput(req, routesToAsk, opts)));
+    if (!out.answers.destination) throw new Error("route-yes: Clef returned no destination answer");
+    return out;
   };
+
+  const first = await ask(candidates);
+  const human = first.answers.human?.noul ?? 1;
+  let usage = first.usage;
+  let decision = judge(first.answers.destination!, human, candidates);
+
+  // With many options Clef's probability spreads thin even when its ranking
+  // is right. If it's unsure, ask again with just its top few.
+  const rerankSize = opts.rerank === false ? 0 : (opts.rerankSize ?? DEFAULTS.rerankSize);
+  if (decision.reason === "low confidence" && rerankSize >= 2 && decision.ranked.length >= 2) {
+    const byPath = new Map(candidates.map((r) => [r.path, r]));
+    const top = decision.ranked.slice(0, rerankSize).map(([path]) => byPath.get(path)!);
+    const second = await ask(top);
+    usage = addUsage(usage, second.usage);
+    decision = judge(second.answers.destination!, human, top, decision.suggestions);
+    decision.rounds = 2;
+  }
+
+  const { ranked: _ranked, ...result } = decision;
+  return {
+    ...base,
+    ...result,
+    to: result.to && withSearch(result.to, req.search),
+    model,
+    usage,
+  };
+
+  function judge(
+    dest: ClefChoice,
+    humanLikelihood: number,
+    asked: RouteEntry[],
+    fallbackSuggestions?: Suggestion[],
+  ): Judged {
+    const byPath = new Map(asked.map((r) => [r.path, r]));
+    const ranked = Object.entries(dest.probabilities)
+      .filter(([id]) => id !== NONE && byPath.has(id))
+      .sort((a, b) => b[1] - a[1]);
+
+    const minHuman = opts.minHumanLikelihood ?? DEFAULTS.minHumanLikelihood;
+    let suggestions: Suggestion[] =
+      humanLikelihood < minHuman
+        ? []
+        : ranked
+            .filter(([, p]) => p >= 0.1)
+            .slice(0, opts.maxSuggestions ?? DEFAULTS.maxSuggestions)
+            .map(([path, probability]) => ({ path, title: byPath.get(path)?.title, probability }));
+    if (suggestions.length === 0 && fallbackSuggestions) suggestions = fallbackSuggestions;
+
+    const confidence = dest.probabilities[dest.choice] ?? 0;
+    const common = { humanLikelihood, suggestions, confidence, ranked };
+
+    if (humanLikelihood < minHuman) {
+      return { ...common, kind: "miss", reason: "not a person looking for content" };
+    }
+    if (dest.choice === NONE || !byPath.has(dest.choice)) {
+      return { ...common, kind: "miss", reason: "no plausible match" };
+    }
+    // Confident outright, or a clear winner over the next-best page (the rest
+    // of the probability is on "none", not a rival route).
+    const runnerUp = ranked[1]?.[1] ?? 0;
+    const dominant =
+      confidence >= (opts.minDominantConfidence ?? DEFAULTS.minDominantConfidence) &&
+      confidence >= (opts.dominance ?? DEFAULTS.dominance) * runnerUp;
+    if (confidence < (opts.minConfidence ?? DEFAULTS.minConfidence) && !dominant) {
+      return { ...common, kind: "miss", reason: "low confidence" };
+    }
+    return { ...common, kind: "ai", to: dest.choice };
+  }
 }

@@ -44,8 +44,36 @@ export interface ResolveOptions {
    * opposed to a bot probing for `/wp-admin`). Default `0.5`.
    */
   minHumanLikelihood?: number;
-  /** Most routes sent to Clef per request, after a cheap lexical prefilter. Max 254. Default `60`. */
+  /** Most routes sent to Clef per request. Larger sites are shortlisted first. Max 254. Default `60`. */
   maxCandidates?: number;
+  /**
+   * How to shortlist on sites with more than `maxCandidates` routes.
+   * `hybrid` (default) fuses spelling matches with embedding similarity, so
+   * synonyms like `/jobs` → `/careers` survive. `lexical` is spelling only and
+   * makes no extra AI calls.
+   */
+  shortlist?: "hybrid" | "lexical";
+  /**
+   * When shortlisted pages share a title, add their section ("Pricing
+   * (workers platform)"). Default `true`.
+   */
+  disambiguateTitles?: boolean;
+  /**
+   * Redirect obvious typos (one or two keystrokes from exactly one page)
+   * without calling Clef. Default `true`.
+   */
+  typoFix?: boolean;
+  /**
+   * When Clef's first answer is unsure, ask again with only its top
+   * `rerankSize` pages. Costs a second, smaller call. Default `true`.
+   */
+  rerank?: boolean;
+  /** Pages in the second round. Default `5`. */
+  rerankSize?: number;
+  /** Called with the routes sent to Clef. For debugging and evaluation. */
+  onShortlist?: (routes: RouteEntry[]) => void;
+  /** Workers AI embedding model for `hybrid`. Default `@cf/baai/bge-small-en-v1.5`. */
+  embeddingModel?: string;
   /** How many suggestions to return when nothing is confident enough. Default `3`. */
   maxSuggestions?: number;
   /** Optional one-line description of the site, which helps Clef with ambiguous paths. */
@@ -70,6 +98,8 @@ export interface Suggestion {
 export type DecisionKind =
   /** Unambiguous match after normalizing case, slashes, `.html`, and so on. No AI call. */
   | "normalized"
+  /** One or two keystrokes from exactly one route. No AI call. */
+  | "typo"
   /** Clef picked a route with enough confidence. */
   | "ai"
   /** Nothing confident enough. `suggestions` may still be populated. */
@@ -90,6 +120,8 @@ export interface Decision {
   /** Why we skipped or missed, for logs. */
   reason?: string;
   model?: ClefModel;
+  /** `2` when Clef was asked a second, narrower question. */
+  rounds?: number;
   /** Milliseconds spent deciding (the Clef call), when not cached. */
   durationMs?: number;
   /** Whether this decision came from cache. */
