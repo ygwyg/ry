@@ -69,9 +69,16 @@ export default withRouteYes();
 ```jsonc
 // wrangler.jsonc
 {
-  "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "none" },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
   "ai": { "binding": "AI" },
-  "kv_namespaces": [{ "binding": "ROUTE_YES_CACHE", "id": "…" }] // optional decision cache
+  // Optional: caches decisions so repeat visits skip Clef
+  "kv_namespaces": [
+    { "binding": "ROUTE_YES_CACHE", "id": "…" }
+  ]
 }
 ```
 
