@@ -6,6 +6,11 @@ export interface RouteEntry {
   title?: string;
   /** Short description, usually the page's meta description. */
   description?: string;
+  /**
+   * URL of the page's Markdown version, e.g. `/pricing.md`, when the site
+   * publishes one. Requests that ask for Markdown are sent here instead.
+   */
+  markdown?: string;
 }
 
 /** The set of routes route-yes is allowed to send visitors to. */
@@ -13,6 +18,11 @@ export interface Manifest {
   /** Changes whenever the routes change; used to invalidate cached decisions. */
   version: string;
   routes: RouteEntry[];
+  /**
+   * Indexes of the site that the build found. Every 404 route-yes answers
+   * links to them, so an agent that missed can find the real pages.
+   */
+  discovery?: { sitemap?: string; llmsTxt?: string };
 }
 
 /**
@@ -59,6 +69,12 @@ export interface RouteRequest {
   search?: string;
   /** Referer header, if any. A useful hint for old inbound links. */
   referrer?: string | null;
+  /**
+   * The client asked for Markdown (a `.md` path, or an `Accept` header that
+   * prefers `text/markdown`). Redirects go to a route's `markdown` URL when
+   * it has one.
+   */
+  markdown?: boolean;
 }
 
 export interface Suggestion {

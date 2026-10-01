@@ -1,5 +1,5 @@
 import { resolveRoute } from "./resolve.js";
-import { renderSuggestPage } from "./suggest-page.js";
+import { renderSuggestMarkdown, renderSuggestPage } from "./suggest-page.js";
 import type { AiLike, Decision, Manifest, ResolveOptions } from "./types.js";
 
 export type { Decision, Manifest, RouteEntry } from "./types.js";
@@ -79,17 +79,59 @@ function headerValue(d: Decision) {
   return parts.join("; ");
 }
 
-function withHeader(res: Response, d: Decision) {
+function withHeader(res: Response, d: Decision, links?: string) {
   const out = new Response(res.body, res);
   out.headers.set("x-route-yes", headerValue(d));
+  if (links) out.headers.append("link", links);
   return out;
 }
 
-function isNavigation(request: Request) {
+/**
+ * Whether an `Accept` header asks for Markdown over HTML. Only types named
+ * exactly count: a wildcard says nothing about which of the two is wanted.
+ * A tie goes to whichever was listed first, which is how agents such as
+ * Claude Code ask (`text/markdown, text/html, *\/*`).
+ */
+export function prefersMarkdown(accept: string | null): boolean {
+  if (!accept) return false;
+  let md: { q: number; i: number } | undefined;
+  let html: { q: number; i: number } | undefined;
+  accept.split(",").forEach((part, i) => {
+    const [type, ...params] = part.trim().toLowerCase().split(";");
+    const qParam = params.map((p) => p.trim()).find((p) => p.startsWith("q="));
+    const q = qParam ? Number(qParam.slice(2)) : 1;
+    const entry = { q: Number.isFinite(q) ? q : 0, i };
+    if (type === "text/markdown") md ??= entry;
+    else if (type === "text/html") html ??= entry;
+  });
+  if (!md || md.q <= 0) return false;
+  if (!html) return true;
+  return md.q > html.q || (md.q === html.q && md.i < html.i);
+}
+
+/** The client wants this document as Markdown: a `.md` path, or a Markdown-first `Accept`. */
+function wantsMarkdown(request: Request, path: string) {
+  return /\.md$/i.test(path) || prefersMarkdown(request.headers.get("accept"));
+}
+
+/**
+ * A request for a document, from a browser or an agent. Agents rarely send
+ * `Sec-Fetch-Mode`, and one asking only for Markdown never mentions HTML.
+ */
+function isDocumentRequest(request: Request, path: string) {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
+  if (wantsMarkdown(request, path)) return true;
   const mode = request.headers.get("sec-fetch-mode");
   if (mode) return mode === "navigate";
   return (request.headers.get("accept") ?? "").includes("text/html");
+}
+
+/** `Link` header pointing at the site's indexes, so a client that missed can find the real pages. */
+function discoveryLinks(manifest: Manifest): string | undefined {
+  const links: string[] = [];
+  if (manifest.discovery?.sitemap) links.push(`<${manifest.discovery.sitemap}>; rel="sitemap"`);
+  if (manifest.discovery?.llmsTxt) links.push(`<${manifest.discovery.llmsTxt}>; rel="alternate"; type="text/plain"`);
+  return links.length ? links.join(", ") : undefined;
 }
 
 /**
@@ -151,11 +193,18 @@ export function withRouteYes<Env = Record<string, unknown>>(
     return manifestPromise;
   }
 
-  async function decide(path: string, request: Request, env: Env, ctx: Ctx): Promise<Decision> {
+  async function decide(
+    path: string,
+    request: Request,
+    env: Env,
+    ctx: Ctx,
+    markdown = false,
+  ): Promise<{ decision: Decision; manifest: Manifest }> {
     const url = new URL(request.url);
     const manifest = await loadManifest(env, url.origin);
     const model = options.model ?? "clef-flash";
-    const key = `https://route-yes.invalid/${manifest.version}/${model}${path}`;
+    // A Markdown request can land somewhere different (a route's .md twin), so it caches separately.
+    const key = `https://route-yes.invalid/${manifest.version}/${model}${markdown ? "/md" : ""}${path}`;
     const cache = ttl > 0 ? edgeCache() : undefined;
     const kv =
       ttl > 0
@@ -182,7 +231,7 @@ export function withRouteYes<Env = Record<string, unknown>>(
       decision = await resolveRoute(
         ai,
         manifest,
-        { path, referrer: request.headers.get("referer") },
+        { path, referrer: request.headers.get("referer"), markdown },
         options,
       );
       decision.durationMs = Date.now() - started;
@@ -207,7 +256,7 @@ export function withRouteYes<Env = Record<string, unknown>>(
       decision = { ...decision, to: decision.to.split("?")[0] + url.search };
     }
     if (options.onDecision) ctx.waitUntil(Promise.resolve(options.onDecision(decision, request, env)));
-    return decision;
+    return { decision, manifest };
   }
 
   async function fetchHandler(request: Request, env: Env, ctx: Ctx): Promise<Response> {
@@ -219,7 +268,7 @@ export function withRouteYes<Env = Record<string, unknown>>(
       const path = url.searchParams.get("path");
       if (!path?.startsWith("/")) return Response.json({ error: "path must start with /" }, { status: 400 });
       try {
-        return Response.json(await decide(path, request, env, ctx), {
+        return Response.json((await decide(path, request, env, ctx)).decision, {
           headers: { "cache-control": "no-store" },
         });
       } catch (err) {
@@ -229,11 +278,15 @@ export function withRouteYes<Env = Record<string, unknown>>(
     }
 
     const res = await inner(request, env, ctx);
-    if (res.status !== 404 || !isNavigation(request)) return res;
+    if (res.status !== 404 || !isDocumentRequest(request, url.pathname)) return res;
 
+    const markdown = wantsMarkdown(request, url.pathname);
     let decision: Decision;
+    let links: string | undefined;
     try {
-      decision = await decide(url.pathname, request, env, ctx);
+      const decided = await decide(url.pathname, request, env, ctx, markdown);
+      decision = decided.decision;
+      links = discoveryLinks(decided.manifest);
     } catch (err) {
       // Never make a 404 worse: fall back to the original response.
       console.error(err);
@@ -252,16 +305,16 @@ export function withRouteYes<Env = Record<string, unknown>>(
     }
 
     if (decision.suggestions.length > 0 && (options.fallback ?? "suggest") === "suggest") {
-      if (options.renderMiss) return withHeader(await options.renderMiss(decision, res), decision);
-      return new Response(request.method === "HEAD" ? null : renderSuggestPage(decision), {
-        status: 404,
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "x-route-yes": headerValue(decision),
-        },
+      if (options.renderMiss) return withHeader(await options.renderMiss(decision, res), decision, links);
+      const body = markdown ? renderSuggestMarkdown(decision) : renderSuggestPage(decision);
+      const headers = new Headers({
+        "content-type": markdown ? "text/markdown; charset=utf-8" : "text/html; charset=utf-8",
+        "x-route-yes": headerValue(decision),
       });
+      if (links) headers.set("link", links);
+      return new Response(request.method === "HEAD" ? null : body, { status: 404, headers });
     }
-    return withHeader(res, decision);
+    return withHeader(res, decision, links);
   }
 
   return typeof handler === "object" && handler

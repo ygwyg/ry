@@ -93,6 +93,11 @@ function withSearch(path: string, search?: string) {
   return search && search !== "?" ? path + search : path;
 }
 
+/** Where to send this request: the route's Markdown version if it asked for one and one exists. */
+function targetOf(route: RouteEntry, req: RouteRequest) {
+  return withSearch(req.markdown && route.markdown ? route.markdown : route.path, req.search);
+}
+
 /**
  * Decide where a request for a missing path should go.
  *
@@ -108,7 +113,7 @@ export async function resolveRoute(
   const base = { from: req.path, confidence: 0, suggestions: [] as Suggestion[] };
   const routes = manifest.routes;
 
-  if (routes.some((r) => r.path === req.path)) {
+  if (routes.some((r) => r.path === req.path || r.markdown === req.path)) {
     // The route exists but still 404'd: stale manifest. Never redirect to itself.
     return { ...base, kind: "skip", reason: "path is in manifest" };
   }
@@ -118,7 +123,7 @@ export async function resolveRoute(
     return {
       ...base,
       kind: "normalized",
-      to: withSearch(exact.path, req.search),
+      to: targetOf(exact, req),
       confidence: 1,
     };
   }
@@ -176,7 +181,7 @@ export async function resolveRoute(
   return {
     ...common,
     kind: "ai",
-    to: withSearch(dest.choice, req.search),
+    to: targetOf(byPath.get(dest.choice)!, req),
     confidence,
   };
 }

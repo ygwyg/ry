@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { normalizePath } from "./match.js";
 import type { Manifest, RouteEntry } from "./types.js";
 
 export type { Manifest, RouteEntry } from "./types.js";
@@ -15,6 +16,12 @@ export interface ManifestOptions {
   tanstackRouteTree?: string;
   /** Glob-free path prefixes to leave out, e.g. `["/admin", "/drafts"]`. */
   exclude?: string[];
+  /**
+   * Your site's origin, e.g. `https://example.com`. Absolute links in
+   * `llms.txt` count as pages only when they point here. Defaults to the
+   * host your sitemap uses.
+   */
+  site?: string;
 }
 
 const SKIP_FILES = /^(?:404|500|_?error)\.html?$/i;
@@ -65,16 +72,78 @@ export function fileToPath(file: string): string {
   return `/${rel.replace(/\.html?$/, "")}`;
 }
 
-async function walk(dir: string): Promise<string[]> {
+async function walk(dir: string, match = /\.html?$/i): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files = await Promise.all(
     entries.map((e) => {
       const full = join(dir, e.name);
-      if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(full);
-      return /\.html?$/i.test(e.name) ? [full] : [];
+      if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(full, match);
+      return match.test(e.name) ? [full] : [];
     }),
   );
   return files.flat();
+}
+
+/**
+ * The page a Markdown URL is the twin of: `/pricing.md` → `/pricing`,
+ * `/docs/index.md` → `/docs/`, `/index.md` → `/`.
+ */
+export function markdownToPage(url: string): string {
+  if (url === "/index.md") return "/";
+  if (url.endsWith("/index.md")) return url.slice(0, -"index.md".length);
+  return url.replace(/\.md$/, "");
+}
+
+/**
+ * Find Markdown versions of pages in `outDir` (`pricing.md` beside
+ * `pricing.html`, or `docs/index.md`), keyed by normalized page path.
+ */
+export async function findMarkdownTwins(outDir: string): Promise<Map<string, string>> {
+  const twins = new Map<string, string>();
+  if (!existsSync(outDir)) return twins;
+  for (const file of await walk(outDir, /\.md$/i)) {
+    const url = `/${relative(outDir, file).split(sep).join("/")}`;
+    twins.set(normalizePath(markdownToPage(url)), url);
+  }
+  return twins;
+}
+
+/**
+ * Discover routes from an `llms.txt` file (https://llmstxt.org): every list
+ * item of the form `- [Title](url): description`. Links to other sites are
+ * left out; pass `site` so absolute links to this one count. A link to a
+ * `.md` file becomes the page it describes, with `markdown` set.
+ */
+export function parseLlmsTxt(text: string, site?: string): RouteEntry[] {
+  const host = site ? safeUrl(site)?.host : undefined;
+  const routes: RouteEntry[] = [];
+  for (const [, title, href, description] of text.matchAll(
+    /^\s*[-*]\s*\[([^\]]+)\]\(([^)\s]+)\)(?::\s*(.+))?$/gm,
+  )) {
+    let path: string | undefined;
+    if (href!.startsWith("/") && !href!.startsWith("//")) path = href!.split(/[?#]/)[0];
+    else {
+      const url = safeUrl(href!);
+      if (url && host && url.host === host) path = url.pathname;
+    }
+    if (!path) continue;
+    const isMarkdown = /\.md$/i.test(path);
+    routes.push({
+      path: isMarkdown ? markdownToPage(path) : path,
+      title: clean(title, 120),
+      description: clean(description, 200),
+      ...(isMarkdown ? { markdown: path } : {}),
+    });
+  }
+  return routes;
+}
+
+function safeUrl(s: string) {
+  try {
+    return new URL(s);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Discover routes from built HTML in `outDir`. */
@@ -130,6 +199,7 @@ export function mergeRoutes(...lists: RouteEntry[][]): RouteEntry[] {
         path: r.path,
         title: r.title ?? prev?.title,
         description: r.description ?? prev?.description,
+        ...((r.markdown ?? prev?.markdown) ? { markdown: r.markdown ?? prev?.markdown } : {}),
       });
     }
   }
@@ -160,17 +230,32 @@ export function stripSiteSuffix(routes: RouteEntry[]): RouteEntry[] {
 /** Build a manifest from every source available. */
 export async function buildManifest(opts: ManifestOptions): Promise<Manifest> {
   const lists: RouteEntry[][] = [];
+  const discovery: NonNullable<Manifest["discovery"]> = {};
+  let twins = new Map<string, string>();
 
   if (opts.outDir) {
     // sitemap.xml, or @astrojs/sitemap's sitemap-index.xml + sitemap-0.xml.
     const sitemaps = existsSync(opts.outDir)
-      ? (await readdir(opts.outDir)).filter((f) => /^sitemap.*\.xml$/.test(f))
+      ? (await readdir(opts.outDir)).filter((f) => /^sitemap.*\.xml$/.test(f)).sort()
       : [];
+    let site = opts.site;
     for (const f of sitemaps) {
-      const entries = parseSitemap(await readFile(join(opts.outDir, f), "utf8"));
+      const xml = await readFile(join(opts.outDir, f), "utf8");
+      site ??= xml.match(/<loc>\s*(https?:\/\/[^/<\s]+)/)?.[1];
+      const entries = parseSitemap(xml);
       lists.push(entries.filter((r) => !r.path.endsWith(".xml")));
     }
+    const index = sitemaps.find((f) => f === "sitemap-index.xml") ?? sitemaps.find((f) => f === "sitemap.xml") ?? sitemaps[0];
+    if (index) discovery.sitemap = `/${index}`;
+
+    // Before the HTML crawl, so a page's own <title> wins over its llms.txt label.
+    const llms = join(opts.outDir, "llms.txt");
+    if (existsSync(llms)) {
+      discovery.llmsTxt = "/llms.txt";
+      lists.push(parseLlmsTxt(await readFile(llms, "utf8"), site));
+    }
     lists.push(await crawlHtml(opts.outDir));
+    twins = await findMarkdownTwins(opts.outDir);
   }
   if (opts.tanstackRouteTree && existsSync(opts.tanstackRouteTree)) {
     lists.push(parseTanstackRouteTree(await readFile(opts.tanstackRouteTree, "utf8")));
@@ -181,11 +266,19 @@ export async function buildManifest(opts: ManifestOptions): Promise<Manifest> {
 
   const exclude = opts.exclude ?? [];
   const routes = stripSiteSuffix(
-    mergeRoutes(...lists).filter(
-      (r) => r.path.startsWith("/") && !exclude.some((x) => r.path.startsWith(x)),
-    ),
+    mergeRoutes(...lists)
+      .filter((r) => r.path.startsWith("/") && !exclude.some((x) => r.path.startsWith(x)))
+      // A Markdown file only becomes a twin of a page that exists; it never adds a route.
+      .map((r) => {
+        const twin = r.markdown ?? twins.get(normalizePath(r.path));
+        return twin ? { ...r, markdown: twin } : r;
+      }),
   );
-  return { version: versionOf(routes), routes };
+  return {
+    version: versionOf(routes),
+    routes,
+    ...(Object.keys(discovery).length ? { discovery } : {}),
+  };
 }
 
 /** Build a manifest and write it to `{outDir}/route-yes.json`. */

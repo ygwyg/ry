@@ -34,6 +34,8 @@ describe("normalizePath", () => {
     ["/about.html", "/about"],
     ["//docs//getting-started/", "/docs/getting-started"],
     ["/blog/index.html", "/blog"],
+    ["/About.md", "/about"],
+    ["/docs/index.md", "/docs"],
     ["/%41bout", "/about"],
     ["/", "/"],
   ])("%s → %s", (input, out) => expect(normalizePath(input)).toBe(out));
@@ -117,6 +119,39 @@ describe("resolveRoute", () => {
     const d = await resolveRoute(ai, manifest, { path: "/about" });
     expect(d.kind).toBe("skip");
     expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it("sends a Markdown request to the page's Markdown version", async () => {
+    const withTwin: Manifest = {
+      version: "md",
+      routes: [
+        { path: "/pricing", title: "Pricing", markdown: "/pricing.md" },
+        { path: "/about", title: "About" },
+      ],
+    };
+    const ai = fakeAi({});
+    expect(await resolveRoute(ai, withTwin, { path: "/Pricing.md", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/pricing.md" });
+    // No twin: the page itself is still the right answer.
+    expect(await resolveRoute(ai, withTwin, { path: "/About.md", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/about" });
+    // A browser asking for the same misspelling gets the HTML page.
+    expect(await resolveRoute(ai, withTwin, { path: "/Pricing/" }))
+      .toMatchObject({ kind: "normalized", to: "/pricing" });
+    expect(ai.run).not.toHaveBeenCalled();
+
+    const clef = fakeAi({ "/pricing": 0.9, [NONE]: 0.1 });
+    expect(await resolveRoute(clef, withTwin, { path: "/priceing", markdown: true }))
+      .toMatchObject({ kind: "ai", to: "/pricing.md" });
+  });
+
+  it("skips a Markdown version that is in the manifest but 404'd", async () => {
+    const ai = fakeAi({});
+    const d = await resolveRoute(ai, { version: "md", routes: [{ path: "/pricing", markdown: "/pricing.md" }] }, {
+      path: "/pricing.md",
+      markdown: true,
+    });
+    expect(d).toMatchObject({ kind: "skip", reason: "path is in manifest" });
   });
 
   it("unwraps REST-style responses", async () => {

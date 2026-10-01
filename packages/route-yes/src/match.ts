@@ -2,7 +2,7 @@ import type { RouteEntry } from "./types.js";
 
 /**
  * Collapse the boring differences between URLs: case, duplicate or trailing
- * slashes, `.html` extensions, `/index`, and percent-encoding.
+ * slashes, `.html` and `.md` extensions, `/index`, and percent-encoding.
  */
 export function normalizePath(path: string): string {
   let p = path;
@@ -12,7 +12,7 @@ export function normalizePath(path: string): string {
     // Malformed escapes: keep the raw path.
   }
   p = p.toLowerCase().replace(/\/{2,}/g, "/");
-  p = p.replace(/\.html?$/, "").replace(/\/index$/, "/");
+  p = p.replace(/\.(?:html?|md)$/, "").replace(/\/index$/, "/");
   if (p.length > 1) p = p.replace(/\/+$/, "");
   return p || "/";
 }
