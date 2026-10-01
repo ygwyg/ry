@@ -8,7 +8,7 @@
 
 <p align="center"><i>ry stands for <b>route yes</b>.</i></p>
 
-<p align="center"><a href="https://route-yes-example.burcs.workers.dev">Live demo</a> · try <a href="https://route-yes-example.burcs.workers.dev/priceing">/priceing</a>, <a href="https://route-yes-example.burcs.workers.dev/jobs">/jobs</a>, or <a href="https://route-yes-example.burcs.workers.dev/release-notes">/release-notes</a></p>
+<p align="center"><a href="https://route-yes-example.burcs.workers.dev">Live demo</a> · try <a href="https://route-yes-example.burcs.workers.dev/priceing">/priceing</a>, <a href="https://route-yes-example.burcs.workers.dev/hiring">/hiring</a>, or <a href="https://route-yes-example.burcs.workers.dev/release-notes">/release-notes</a></p>
 
 <p align="center"><img src="assets/demo.gif" alt="Demo: clicking broken links on the example site; ry redirects /priceing to Pricing, /docs/quickstart to Getting started, and shows suggestions for /our-team" width="760"></p>
 
