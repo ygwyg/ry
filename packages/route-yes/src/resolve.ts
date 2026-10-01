@@ -15,6 +15,8 @@ export const NONE = "none";
 const DEFAULTS = {
   model: "clef-flash",
   minConfidence: 0.7,
+  minDominantConfidence: 0.5,
+  dominance: 3,
   minHumanLikelihood: 0.5,
   maxCandidates: 60,
   maxSuggestions: 3,
@@ -162,7 +164,13 @@ export async function resolveRoute(
   if (dest.choice === NONE || !byPath.has(dest.choice)) {
     return { ...common, kind: "miss", confidence, reason: "no plausible match" };
   }
-  if (confidence < (opts.minConfidence ?? DEFAULTS.minConfidence)) {
+  // Confident outright, or a clear winner over the next-best page (the rest of
+  // the probability is on "none", not a rival route).
+  const runnerUp = ranked[1]?.[1] ?? 0;
+  const dominant =
+    confidence >= (opts.minDominantConfidence ?? DEFAULTS.minDominantConfidence) &&
+    confidence >= (opts.dominance ?? DEFAULTS.dominance) * runnerUp;
+  if (confidence < (opts.minConfidence ?? DEFAULTS.minConfidence) && !dominant) {
     return { ...common, kind: "miss", confidence, reason: "low confidence" };
   }
   return {

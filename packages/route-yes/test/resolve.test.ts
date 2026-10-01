@@ -88,6 +88,13 @@ describe("resolveRoute", () => {
     expect(d.suggestions.map((s) => s.path)).toEqual(["/about", "/pricing"]);
   });
 
+  it("redirects a clear winner below minConfidence", async () => {
+    const ai = fakeAi({ "/pricing": 0.6, "/about": 0.1, [NONE]: 0.3 });
+    expect(await resolveRoute(ai, manifest, { path: "/pricng" })).toMatchObject({ kind: "ai", to: "/pricing" });
+    const close = fakeAi({ "/pricing": 0.55, "/about": 0.3, [NONE]: 0.15 });
+    expect((await resolveRoute(close, manifest, { path: "/x" })).kind).toBe("miss");
+  });
+
   it("misses when Clef says none", async () => {
     const d = await resolveRoute(fakeAi({ "/about": 0.1, [NONE]: 0.9 }), manifest, { path: "/zzz" });
     expect(d).toMatchObject({ kind: "miss", reason: "no plausible match" });

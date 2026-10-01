@@ -29,8 +29,16 @@ export type ClefModel = "clef" | "clef-flash";
 export interface ResolveOptions {
   /** Which Clef variant to use. `clef-flash` is roughly 5x faster. Default `clef-flash`. */
   model?: ClefModel;
-  /** Minimum probability on the chosen route before redirecting. Default `0.7`. */
+  /** Probability on the chosen route that always redirects. Default `0.7`. */
   minConfidence?: number;
+  /**
+   * Below `minConfidence`, still redirect when the chosen route has at least
+   * this probability and is `dominance` times likelier than the runner-up.
+   * Default `0.5`.
+   */
+  minDominantConfidence?: number;
+  /** See `minDominantConfidence`. Default `3`. */
+  dominance?: number;
   /**
    * Minimum probability that the request is a person looking for content (as
    * opposed to a bot probing for `/wp-admin`). Default `0.5`.

@@ -39,7 +39,8 @@ function metaContent(html: string, name: string) {
   const tag = html.match(
     new RegExp(`<meta[^>]+(?:name|property)=["']${name}["'][^>]*>`, "i"),
   )?.[0];
-  return tag?.match(/content=["']([^"']*)["']/i)?.[1];
+  const m = tag?.match(/content=(?:"([^"]*)"|'([^']*)')/i);
+  return m?.[1] ?? m?.[2];
 }
 
 /** Pull a title and description out of a built HTML page. */
@@ -135,6 +136,27 @@ export function mergeRoutes(...lists: RouteEntry[][]): RouteEntry[] {
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
+// The last " · Site", " | Site", or " - Site". Separators need spaces around
+// them, so names like "clef•ai•ry" survive intact.
+const SUFFIX = /\s[|·•\-–—]\s(?!.*\s[|·•\-–—]\s).+$/;
+
+/**
+ * Drop a site-name suffix ("Pricing · Acme") shared by most titles. It's
+ * noise for Clef and for suggestion lists.
+ */
+export function stripSiteSuffix(routes: RouteEntry[]): RouteEntry[] {
+  const counts = new Map<string, number>();
+  for (const r of routes) {
+    const m = r.title?.match(SUFFIX);
+    if (m) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+  }
+  const [suffix, n] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (!suffix || !n || n < 2 || n < routes.length / 2) return routes;
+  return routes.map((r) =>
+    r.title?.endsWith(suffix) ? { ...r, title: r.title.slice(0, -suffix.length) } : r,
+  );
+}
+
 /** Build a manifest from every source available. */
 export async function buildManifest(opts: ManifestOptions): Promise<Manifest> {
   const lists: RouteEntry[][] = [];
@@ -158,8 +180,10 @@ export async function buildManifest(opts: ManifestOptions): Promise<Manifest> {
   }
 
   const exclude = opts.exclude ?? [];
-  const routes = mergeRoutes(...lists).filter(
-    (r) => r.path.startsWith("/") && !exclude.some((x) => r.path.startsWith(x)),
+  const routes = stripSiteSuffix(
+    mergeRoutes(...lists).filter(
+      (r) => r.path.startsWith("/") && !exclude.some((x) => r.path.startsWith(x)),
+    ),
   );
   return { version: versionOf(routes), routes };
 }

@@ -8,6 +8,7 @@ import {
   fileToPath,
   parseSitemap,
   parseTanstackRouteTree,
+  stripSiteSuffix,
 } from "../src/manifest.js";
 
 describe("manifest", () => {
@@ -24,6 +25,8 @@ describe("manifest", () => {
     );
     expect(info).toEqual({ title: "Pricing & plans", description: "What it costs", noindex: false });
     expect(extractPageInfo(`<meta name="robots" content="noindex">`).noindex).toBe(true);
+    expect(extractPageInfo(`<meta name="description" content="We're hiring">`).description).toBe("We're hiring");
+    expect(extractPageInfo(`<meta name='description' content='Say "hi"'>`).description).toBe('Say "hi"');
   });
 
   it("parses sitemaps and TanStack route trees", () => {
@@ -40,6 +43,19 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {}`;
     expect(parseTanstackRouteTree(tree).map((r) => r.path)).toEqual(["/", "/about", "/posts"]);
+  });
+
+  it("strips a site-wide title suffix", () => {
+    const routes = stripSiteSuffix([
+      { path: "/", title: "Acme" },
+      { path: "/a", title: "Pricing · Acme" },
+      { path: "/b", title: "Docs · Acme" },
+      { path: "/d", title: "Tips · Tricks · Acme" },
+      { path: "/c", title: "Q&A - the basics" },
+    ]);
+    expect(stripSiteSuffix([{ path: "/", title: "A · clef•ai•ry" }, { path: "/b", title: "B · clef•ai•ry" }])
+      .map((r) => r.title)).toEqual(["A", "B"]);
+    expect(routes.map((r) => r.title)).toEqual(["Acme", "Pricing", "Docs", "Tips · Tricks", "Q&A - the basics"]);
   });
 
   it("crawls a build directory", async () => {

@@ -3,14 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Acme Cloud</title>
-<meta name="description" content="Deploy apps to the edge in seconds.">
+<title>clef•ai•ry</title>
+<meta name="description" content="The home page of the ry project.">
 <link rel="icon" href="/ry.jpeg">
-<link rel="stylesheet" href="/src/style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Pixelify+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="/demo.css">
 <script type="module" src="/src/ry.ts"></script>
 </head>
 <body>
-<nav><a href="/">Acme Cloud</a><a href="/pricing/">Pricing</a><a href="/docs/getting-started/">Docs</a><a href="/blog/hello-world/">Blog</a><a href="/careers/">Careers</a></nav>
-<main><h1>Every link here is broken.</h1><p>None of these pages exist. Click one and route-yes uses Cloudflare Clef to work out where you meant to go.</p><div class="try"><a href="/priceing"><code>/priceing</code><span>typo</span></a><a href="/docs/quickstart"><code>/docs/quickstart</code><span>renamed page</span></a><a href="/hiring"><code>/hiring</code><span>synonym</span></a><a href="/release-notes"><code>/release-notes</code><span>synonym</span></a><a href="/how-much-does-it-cost"><code>/how-much-does-it-cost</code><span>a question</span></a><a href="/blog/hello"><code>/blog/hello</code><span>truncated link</span></a><a href="/About/"><code>/About/</code><span>wrong case, no AI</span></a><a href="/our-team"><code>/our-team</code><span>ambiguous: suggests</span></a><a href="/wp-admin/setup.php"><code>/wp-admin/setup.php</code><span>bot probe: ignored</span></a></div></main>
+<header class="bar">
+  <a class="mark" href="/"><img src="/ry.jpeg" alt=""><span>clef<span class="dot">•</span>ai<span class="dot">•</span>ry</span></a>
+  <nav><a href="/docs/getting-started/">Docs</a><a href="/pricing/">Pricing</a><a href="/blog/hello-world/">Blog</a><a href="/careers/">Careers</a></nav>
+</header>
+<main><section class="hero">
+  <img src="/ry.jpeg" alt="ry, a pixel-art Clefairy">
+  <div><h1>clef<span class="dot">•</span>ai<span class="dot">•</span>ry</h1><p>ry stands for route yes. When someone lands on a page that doesn't exist, ry asks Cloudflare Clef where they meant to go and sends them there.</p></div>
+</section>
+<section class="box">
+  <h2 class="box-title">A wild 404 appeared</h2>
+  <p>None of these pages exist. Pick one and see where ry sends you.</p>
+  <ul class="menu"><li><a href="/priceing">/priceing<small>a typo</small></a></li><li><a href="/docs/quickstart">/docs/quickstart<small>a renamed page</small></a></li><li><a href="/hiring">/hiring<small>a synonym</small></a></li><li><a href="/release-notes">/release-notes<small>another synonym</small></a></li><li><a href="/how-much-does-it-cost">/how-much-does-it-cost<small>a question</small></a></li><li><a href="/blog/hello">/blog/hello<small>a truncated link</small></a></li><li><a href="/About/">/About/<small>wrong case, fixed without AI</small></a></li><li><a href="/our-team">/our-team<small>ambiguous, so ry suggests</small></a></li><li><a href="/wp-admin/setup.php">/wp-admin/setup.php<small>a bot probe, ignored</small></a></li></ul>
+</section></main>
 </body>
 </html>

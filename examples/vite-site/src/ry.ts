@@ -19,11 +19,11 @@ if (match) {
     const detail = document.createElement("span");
     detail.textContent =
       kind === "normalized"
-        ? "Fixed the URL without calling AI"
-        : `Clef was ${Math.round(confidence * 100)}% sure${ms ? ` · decided in ${(Number(ms) / 1000).toFixed(1)}s` : " · cached"}`;
+        ? "Fixed the URL without calling AI."
+        : `Clef was ${Math.round(confidence * 100)}% sure${ms ? `, decided in ${(Number(ms) / 1000).toFixed(1)}s` : " (cached)"}.`;
     text.append(title, detail);
     banner.append(img, text);
-    document.body.prepend(banner);
+    document.querySelector("main")?.prepend(banner);
   } catch {
     // Ignore a malformed cookie.
   }
