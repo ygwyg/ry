@@ -1,4 +1,16 @@
-# route-yes
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ygwyg/ry/main/assets/ry.jpeg" width="160" alt="ry, a pixel-art Clefairy">
+  <br>
+  <b>clef•ai•ry</b>
+</p>
+
+<h1 align="center">ry</h1>
+
+<p align="center"><i>ry stands for <b>route yes</b>.</i></p>
+
+<p align="center"><a href="https://route-yes-example.burcs.workers.dev">Live demo</a> · try <a href="https://route-yes-example.burcs.workers.dev/priceing">/priceing</a>, <a href="https://route-yes-example.burcs.workers.dev/jobs">/jobs</a>, or <a href="https://route-yes-example.burcs.workers.dev/release-notes">/release-notes</a></p>
+
+<p align="center"><img src="https://raw.githubusercontent.com/ygwyg/ry/main/assets/demo.gif" alt="Demo: clicking broken links on the example site; ry redirects /priceing to Pricing, /docs/quickstart to Getting started, and shows suggestions for /our-team" width="760"></p>
 
 **An AI router for 404s.** When someone hits a URL that doesn't exist, route-yes asks [Cloudflare Clef](https://blog.cloudflare.com/clef-decision-models/) which real page they meant, and sends them there.
 
@@ -13,7 +25,7 @@
 /wp-admin/setup.php        → 404                        (skipped, no AI call)
 ```
 
-These are real results from Clef running against [`examples/vite-site`](examples/vite-site).
+These are real results from Clef running against [`examples/vite-site`](https://github.com/ygwyg/ry/tree/main/examples/vite-site).
 
 ## Why Clef
 
@@ -32,9 +44,9 @@ Clef is a *decision* model: you give it a state and typed questions, and it retu
 4. **Prefilter.** A lexical score trims the route list to the top 60 candidates (Clef accepts up to 255 options).
 5. **Ask Clef** with one `choice` question ("which page did they mean?", including `none`) and one `noul` question ("is this a person?").
 6. **Act.** A confident answer (≥ 0.7) gets a 302 with the query string preserved. A partial match gets a "did you mean" 404 page. Anything else keeps the original 404.
-7. **Cache** the decision per path in the Cache API and in isolate memory. The cache resets whenever the route manifest changes.
+7. **Cache** the decision per path in isolate memory, the Cache API, and KV (if you bind `ROUTE_YES_CACHE`). The cache resets whenever the route manifest changes.
 
-Every response carries an `x-route-yes` header explaining the decision. Any failure falls back to your original 404.
+Every response carries an `x-route-yes` header explaining the decision, including how long Clef took (`ms=`). Any failure falls back to your original 404.
 
 ## Install
 
@@ -92,7 +104,9 @@ export default withRouteYes();
     "binding": "ASSETS",
     "not_found_handling": "none" // required, see below
   },
-  "ai": { "binding": "AI" }
+  "ai": { "binding": "AI" },
+  // Optional but recommended, especially on *.workers.dev where the Cache API is unavailable
+  "kv_namespaces": [{ "binding": "ROUTE_YES_CACHE", "id": "<from: wrangler kv namespace create ROUTE_YES_CACHE>" }]
 }
 ```
 
@@ -142,6 +156,7 @@ withRouteYes(handler, {
   siteDescription: "Acme, a developer platform", // helps with ambiguous paths
   fallback: "suggest",          // or "passthrough" to keep your own 404 page
   cacheTtl: 86400,              // seconds; 0 disables caching
+  kv: (env) => env.MY_KV,       // decision cache; defaults to env.ROUTE_YES_CACHE
   aiStatus: 302,                // a model picked it, so not permanent by default
   normalizedStatus: 301,
   endpoint: "/_route-yes",      // SPA endpoint; false disables it
@@ -167,6 +182,8 @@ CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… npx route-yes try /priceing -
 
 ## Notes
 
+- **Latency.** Each uncached Clef call took 0.5–4.5s in production during launch week, not the ~40ms Cloudflare quotes for `clef-flash`. Cached decisions skip Clef entirely, so bind KV.
+- **Borderline paths can flip.** Clef's confidence for the same kind of path varies between calls (`/jobs` scored 0.65–0.82 across runs), so a path near `minConfidence` may redirect once and show suggestions another time. The first decision is then cached for `cacheTtl`.
 - **Cost control.** Only page navigations that 404 call Clef, and each unique path is decided once per cache TTL. On a public site, consider adding a [Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) in `onDecision` or in front of the Worker; random-path floods are the main cost risk.
 - **SEO.** AI redirects are 302s by default so search engines don't treat a model's guess as permanent. The suggestions page sends `noindex`.
 - **Safety.** Redirect targets can only come from your manifest, so there's no open redirect. A route that is in the manifest but still 404s is never redirected to itself.

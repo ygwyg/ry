@@ -9,5 +9,11 @@
     // answered by the assets layer and never reach the Worker.
     "not_found_handling": "none"
   },
-  "ai": { "binding": "AI" }
+  "ai": { "binding": "AI" },
+  // Optional decision cache. The Cache API doesn't work on *.workers.dev, so
+  // KV keeps repeat visitors from re-asking Clef. To use your own:
+  // `wrangler kv namespace create ROUTE_YES_CACHE`, or delete this block.
+  "kv_namespaces": [
+    { "binding": "ROUTE_YES_CACHE", "id": "c2c37b89b89d4890804748b929ffa484" }
+  ]
 }

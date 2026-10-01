@@ -82,6 +82,23 @@ describe("withRouteYes", () => {
     expect(e.AI.run).toHaveBeenCalledTimes(1);
   });
 
+  it("caches decisions in KV when bound", async () => {
+    const store = new Map<string, string>();
+    const ROUTE_YES_CACHE = {
+      get: async (k: string) => (store.has(k) ? JSON.parse(store.get(k)!) : null),
+      put: async (k: string, v: string) => void store.set(k, v),
+    };
+    const waits: Promise<unknown>[] = [];
+    const c = { waitUntil: (p: Promise<unknown>) => void waits.push(p) };
+    const e = { ...env({ "/pricing": 0.9, [NONE]: 0.1 }), ROUTE_YES_CACHE };
+    const opts = { manifest: { ...manifest, version: "kv-test" } };
+
+    await withRouteYes(undefined, opts).fetch(nav("/plans-kv"), e, c);
+    await Promise.all(waits);
+    expect(store.size).toBe(1);
+    expect(e.AI.run).toHaveBeenCalledTimes(1);
+  });
+
   it("serves the JSON endpoint for SPAs", async () => {
     const e = env({ "/pricing": 0.9, [NONE]: 0.1 });
     const worker = withRouteYes(undefined, { manifest, cacheTtl: 0 });

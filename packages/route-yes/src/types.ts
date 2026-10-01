@@ -82,6 +82,8 @@ export interface Decision {
   /** Why we skipped or missed, for logs. */
   reason?: string;
   model?: ClefModel;
+  /** Milliseconds spent deciding (the Clef call), when not cached. */
+  durationMs?: number;
   /** Whether this decision came from cache. */
   cached?: boolean;
   usage?: { input_tokens: number; output_tokens: number };

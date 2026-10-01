@@ -30,6 +30,12 @@ export interface RouteYesOptions<Env> extends ResolveOptions {
   fallback?: "suggest" | "passthrough";
   /** Seconds to cache decisions per path. `0` disables. Default one day. */
   cacheTtl?: number;
+  /**
+   * KV namespace for caching decisions across locations. Default
+   * `env.ROUTE_YES_CACHE` if bound. Recommended on `*.workers.dev`, where the
+   * Cache API is unavailable.
+   */
+  kv?: (env: Env) => KVLike | undefined;
   /** HTTP status for AI redirects. Default `302`, since a model chose it. */
   aiStatus?: 301 | 302 | 307 | 308;
   /** HTTP status for normalization redirects (`/About/` → `/about`). Default `301`. */
@@ -43,6 +49,11 @@ export interface RouteYesOptions<Env> extends ResolveOptions {
   onDecision?: (decision: Decision, request: Request, env: Env) => void | Promise<void>;
   /** Replace the built-in "did you mean" page. */
   renderMiss?: (decision: Decision, original: Response) => Response | Promise<Response>;
+}
+
+interface KVLike {
+  get(key: string, type: "json"): Promise<unknown>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
 }
 
 const memory = new Map<string, Decision>();
@@ -64,6 +75,7 @@ function headerValue(d: Decision) {
   if (d.to) parts.push(`to=${d.to}`);
   if (d.reason) parts.push(`reason="${d.reason}"`);
   if (d.cached) parts.push("cached");
+  else if (d.durationMs !== undefined) parts.push(`ms=${d.durationMs}`);
   return parts.join("; ");
 }
 
@@ -145,23 +157,35 @@ export function withRouteYes<Env = Record<string, unknown>>(
     const model = options.model ?? "clef-flash";
     const key = `https://route-yes.invalid/${manifest.version}/${model}${path}`;
     const cache = ttl > 0 ? edgeCache() : undefined;
+    const kv =
+      ttl > 0
+        ? options.kv
+          ? options.kv(env)
+          : (env as { ROUTE_YES_CACHE?: KVLike }).ROUTE_YES_CACHE
+        : undefined;
 
     let decision = ttl > 0 ? memory.get(key) : undefined;
     if (!decision && cache) {
       const hit = await cache.match(key);
       if (hit) decision = (await hit.json()) as Decision;
     }
+    if (!decision && kv) {
+      decision = ((await kv.get(key, "json")) as Decision | null) ?? undefined;
+      if (decision) remember(key, decision);
+    }
     if (decision) {
       decision = { ...decision, cached: true };
     } else {
       const ai = options.ai ? options.ai(env) : (env as { AI?: AiLike }).AI;
       if (!ai) throw new Error("route-yes: no AI binding found (add `ai` to wrangler config)");
+      const started = Date.now();
       decision = await resolveRoute(
         ai,
         manifest,
         { path, referrer: request.headers.get("referer") },
         options,
       );
+      decision.durationMs = Date.now() - started;
       if (ttl > 0) {
         remember(key, decision);
         if (cache) {
@@ -169,6 +193,11 @@ export function withRouteYes<Env = Record<string, unknown>>(
             headers: { "cache-control": `max-age=${ttl}` },
           });
           ctx.waitUntil(cache.put(key, stored));
+        }
+        if (kv) {
+          ctx.waitUntil(
+            kv.put(key, JSON.stringify(decision), { expirationTtl: Math.max(ttl, 60) }),
+          );
         }
       }
     }
