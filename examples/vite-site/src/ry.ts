@@ -20,7 +20,9 @@ if (match) {
     detail.textContent =
       kind === "normalized"
         ? "Fixed the URL without calling AI."
-        : `Clef was ${Math.round(confidence * 100)}% sure${ms ? `, decided in ${(Number(ms) / 1000).toFixed(1)}s` : " (cached)"}.`;
+        : kind === "typo"
+          ? "Fixed a typo without calling AI."
+          : `Clef was ${Math.round(confidence * 100)}% sure${ms ? `, decided in ${(Number(ms) / 1000).toFixed(1)}s` : " (cached)"}.`;
     text.append(title, detail);
     banner.append(img, text);
     document.querySelector("main")?.prepend(banner);

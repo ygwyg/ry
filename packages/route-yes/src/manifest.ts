@@ -50,13 +50,30 @@ function metaContent(html: string, name: string) {
   return m?.[1] ?? m?.[2];
 }
 
+/** The first real paragraph of the page's main content, as plain text. */
+function firstParagraph(html: string): string | undefined {
+  const body =
+    html.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1] ??
+    html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1] ??
+    html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ??
+    "";
+  for (const [, inner] of body.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const text = inner!.replace(/<[^>]+>/g, "").trim();
+    if (text.length >= 40) return text;
+  }
+  return undefined;
+}
+
 /** Pull a title and description out of a built HTML page. */
 export function extractPageInfo(html: string): { title?: string; description?: string; noindex: boolean } {
   const robots = metaContent(html, "robots") ?? "";
   return {
     title: clean(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1], 120)
       ?? clean(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]+>/g, ""), 120),
-    description: clean(metaContent(html, "description") ?? metaContent(html, "og:description"), 200),
+    description: clean(
+      metaContent(html, "description") ?? metaContent(html, "og:description") ?? firstParagraph(html),
+      200,
+    ),
     noindex: /noindex/i.test(robots),
   };
 }

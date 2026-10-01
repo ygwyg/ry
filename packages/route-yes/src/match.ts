@@ -106,6 +106,57 @@ export function lexicalScore(path: string, route: RouteEntry): number {
   return total / want.length + 0.5 * wholePath;
 }
 
+/**
+ * Edit distance where a swap of two adjacent letters counts as one edit
+ * (optimal string alignment). Gives up early once it exceeds `max`.
+ */
+export function typoDistance(a: string, b: string, max = Infinity): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const rows: number[][] = [Array.from({ length: b.length + 1 }, (_, j) => j)];
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let d = Math.min(rows[i - 1]![j]! + 1, row[j - 1]! + 1, rows[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d = Math.min(d, rows[i - 2]![j - 2]! + 1);
+      }
+      row[j] = d;
+      best = Math.min(best, d);
+    }
+    if (best > max) return max + 1;
+    rows.push(row);
+  }
+  return rows[a.length]![b.length]!;
+}
+
+/**
+ * The single route `path` is an obvious typo of: within one edit (two for
+ * longer paths) and clearly closer than any other route. Undefined when
+ * there's no such route or two are about equally close.
+ */
+export function findTypoMatch(path: string, routes: RouteEntry[]): RouteEntry | undefined {
+  const target = normalizePath(path);
+  // Very short paths are too easy to "fix" into the wrong page.
+  if (target.length < 5) return undefined;
+  const max = target.length >= 12 ? 2 : 1;
+  let best: RouteEntry | undefined;
+  let bestD = Infinity;
+  let secondD = Infinity;
+  for (const r of routes) {
+    const d = typoDistance(target, normalizePath(r.path), max + 1);
+    if (d < bestD) {
+      secondD = bestD;
+      bestD = d;
+      best = r;
+    } else if (d < secondD) {
+      secondD = d;
+    }
+  }
+  return bestD > 0 && bestD <= max && secondD > bestD + 1 ? best : undefined;
+}
+
 /** Pick the `limit` routes most worth showing to Clef. */
 export function prefilter(
   path: string,

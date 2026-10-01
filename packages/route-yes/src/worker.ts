@@ -38,7 +38,7 @@ export interface RouteYesOptions<Env> extends ResolveOptions {
   kv?: (env: Env) => KVLike | undefined;
   /** HTTP status for AI redirects. Default `302`, since a model chose it. */
   aiStatus?: 301 | 302 | 307 | 308;
-  /** HTTP status for normalization redirects (`/About/` → `/about`). Default `301`. */
+  /** HTTP status for normalization redirects (`/About/` → `/about`). Default `301`. Typo fixes use `aiStatus`. */
   normalizedStatus?: 301 | 302 | 307 | 308;
   /**
    * Static sites only: page to serve on a miss when there's no handler.

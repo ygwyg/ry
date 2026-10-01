@@ -111,12 +111,16 @@ Links in `llms.txt` count as your pages when they're relative or on your sitemap
 
 ## How ry decides
 
-1. **Fix the easy ones.** Differences in case, slashes, `.html`, `.md`, or `/index` get a 301 without calling Clef.
+1. **Fix the easy ones.** Differences in case, slashes, `.html`, `.md`, or `/index` get a 301.
 2. **Skip the noise.** Asset requests and obvious probes (`.env`, `.php`, `wp-admin`) keep their 404.
-3. **Shortlist.** A quick text match picks the 60 likeliest pages, which keeps the Clef call small.
-4. **Ask Clef** which page the visitor meant (or none), and whether they look like a person.
-5. **Act.** ry sends a 302 when the top page scores 0.7 or higher, or 0.5 and three times the runner-up. Weaker matches get a "did you mean" page. The query string is kept on redirects.
-6. **Cache** each decision by path in memory, the Cache API, and KV. Redeploying with changed pages clears it.
+3. **Fix typos.** A URL one or two keystrokes from exactly one page redirects immediately.
+4. **Shortlist.** On sites with more than 60 pages, ry picks the 60 likeliest by spelling and by meaning (Workers AI embeddings), so `/jobs` still finds `/careers`.
+5. **Ask Clef** which page the visitor meant (or none), and whether they look like a person.
+6. **Ask again if unsure.** If Clef's top pick is weak, ry asks a second time with only its top 5. With fewer options it can commit.
+7. **Act.** ry sends a 302 when the top page scores 0.7 or higher, or 0.5 and three times the runner-up. Weaker matches get a "did you mean" page. The query string is kept on redirects.
+8. **Cache** each decision by path in memory, the Cache API, and KV. Redeploying with changed pages clears it.
+
+Steps 1 to 3 don't call AI. On a 662-page test site, ry sends 76% of broken URLs to the right page, and never to the wrong one. Including suggestions, it offers the right page 97% of the time. See [eval/RESULTS.md](eval/RESULTS.md).
 
 Every response gets an `x-route-yes` header with the decision, the confidence, and how long Clef took. If anything fails, the visitor gets your normal 404.
 
@@ -129,6 +133,10 @@ withRouteYes(handler, {
   minDominantConfidence: 0.5,    // ...or above this when it's
   dominance: 3,                  //    3x likelier than the runner-up
   minHumanLikelihood: 0.5,       // below this, treat the visitor as a bot
+  typoFix: true,                 // redirect obvious typos without calling Clef
+  shortlist: "hybrid",           // or "lexical" (spelling only, no embedding calls)
+  maxCandidates: 60,             // pages sent to Clef; more options dilute its confidence
+  rerank: true,                  // ask again with the top 5 when unsure
   siteDescription: "…",          // one line about your site; helps with vague paths
   fallback: "suggest",           // or "passthrough" to always show your own 404
   renderMiss: (decision) => …,   // your own "did you mean" page
@@ -148,7 +156,8 @@ CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… npx route-yes try /priceing
 
 - **Speed.** During launch week, uncached Clef calls took 0.5 to 5 seconds, not the ~40ms Cloudflare advertises. Cached paths skip Clef, so bind KV. The Cache API doesn't work on `*.workers.dev`.
 - **Borderline paths can flip.** Confidence varies a little between calls, so a path near the threshold might redirect once and show suggestions another time. Whichever answer comes first is cached.
-- **Your page copy matters.** Clef reads your titles and meta descriptions. A homepage description that mentions every section pulls guesses toward the homepage.
+- **Your page copy matters.** Clef reads your titles and descriptions, falling back to each page's first paragraph. A homepage description that mentions every section pulls guesses toward the homepage.
+- **Big sites use embeddings.** Above 60 pages, each uncached 404 also makes one small embedding call. Each Worker instance embeds the whole page list once (about 1s for 660 pages). Set `shortlist: "lexical"` to avoid both.
 - **Cost.** Clef only runs for page visits that 404, once per path per cache period. On a public site, add [rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) so floods of random URLs can't run up your bill.
 - **Safety and SEO.** ry only redirects to pages in your manifest, so it can't be used as an open redirect. AI redirects are 302s, and the suggestions page is `noindex`.
 - **Dynamic routes** like `/posts/:id` aren't redirect targets. Prerendered pages and sitemap entries are.

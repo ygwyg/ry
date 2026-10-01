@@ -1,0 +1,16 @@
+{
+  "name": "route-yes-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixture": "node build-fixture.ts",
+    "dev": "wrangler dev --port 8798",
+    "eval": "node run.ts"
+  },
+  "dependencies": {
+    "route-yes": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "^4.30.0"
+  }
+}

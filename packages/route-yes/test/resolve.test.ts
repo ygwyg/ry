@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { findNormalizedMatch, normalizePath, prefilter, skipReason } from "../src/match.js";
+import { findNormalizedMatch, findTypoMatch, normalizePath, prefilter, skipReason, typoDistance } from "../src/match.js";
 import { NONE, resolveRoute } from "../src/resolve.js";
 import type { AiLike, Manifest } from "../src/types.js";
 
@@ -72,7 +72,7 @@ describe("resolveRoute", () => {
 
   it("follows a confident Clef choice", async () => {
     const ai = fakeAi({ "/about": 0.92, "/pricing": 0.03, [NONE]: 0.05 });
-    const d = await resolveRoute(ai, manifest, { path: "/abuot" });
+    const d = await resolveRoute(ai, manifest, { path: "/company-story" });
     expect(d).toMatchObject({ kind: "ai", to: "/about", confidence: 0.92 });
 
     const [model, input] = ai.run.mock.calls[0]!;
@@ -80,6 +80,23 @@ describe("resolveRoute", () => {
     expect(input.model).toBe("clef-flash");
     expect(input.questions.destination.criteria["/about"]).toBe("About us — The team behind Acme");
     expect(input.questions.destination.criteria[NONE]).toBeTruthy();
+  });
+
+  it("disambiguates pages that share a title", async () => {
+    const ai = fakeAi({ "/workers/pricing": 0.9, [NONE]: 0.1 });
+    const shared: Manifest = {
+      version: "dup",
+      routes: [
+        { path: "/workers/pricing", title: "Pricing" },
+        { path: "/r2/platform/pricing/", title: "Pricing" },
+        { path: "/about", title: "About" },
+      ],
+    };
+    await resolveRoute(ai, shared, { path: "/workers/cost" });
+    const criteria = ai.run.mock.calls[0]![1].questions.destination.criteria;
+    expect(criteria["/workers/pricing"]).toBe("Pricing (workers)");
+    expect(criteria["/r2/platform/pricing/"]).toBe("Pricing (r2 platform)");
+    expect(criteria["/about"]).toBe("About");
   });
 
   it("misses with suggestions when unsure", async () => {
@@ -92,9 +109,51 @@ describe("resolveRoute", () => {
 
   it("redirects a clear winner below minConfidence", async () => {
     const ai = fakeAi({ "/pricing": 0.6, "/about": 0.1, [NONE]: 0.3 });
-    expect(await resolveRoute(ai, manifest, { path: "/pricng" })).toMatchObject({ kind: "ai", to: "/pricing" });
+    expect(await resolveRoute(ai, manifest, { path: "/plans" })).toMatchObject({ kind: "ai", to: "/pricing" });
     const close = fakeAi({ "/pricing": 0.55, "/about": 0.3, [NONE]: 0.15 });
     expect((await resolveRoute(close, manifest, { path: "/x" })).kind).toBe("miss");
+  });
+
+  it("fixes obvious typos without calling Clef", async () => {
+    const ai = fakeAi({});
+    expect(await resolveRoute(ai, manifest, { path: "/abuot", search: "?a=1" })).toMatchObject({
+      kind: "typo",
+      to: "/about?a=1",
+    });
+    expect(await resolveRoute(ai, manifest, { path: "/blog/helo-world" })).toMatchObject({ to: "/blog/hello-world" });
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it("leaves ambiguous or short typos to Clef", async () => {
+    const posts: Manifest = { version: "p", routes: [{ path: "/post-1" }, { path: "/post-2" }] };
+    expect(findTypoMatch("/post-3", posts.routes)).toBeUndefined();
+    expect(findTypoMatch("/abt", manifest.routes)).toBeUndefined();
+    expect(findTypoMatch("/aboot", manifest.routes, )?.path).toBe("/about");
+    expect(typoDistance("pricnig", "pricing")).toBe(1);
+  });
+
+  it("asks a second, narrower question when unsure", async () => {
+    const answers = [
+      { "/about": 0.35, "/pricing": 0.2, "/docs/getting-started": 0.1, [NONE]: 0.35 },
+      { "/about": 0.8, "/pricing": 0.1, [NONE]: 0.1 },
+    ];
+    const run = vi.fn(async (_m: string, input: { questions: { destination: { criteria: object } } }) => {
+      const probabilities = answers.shift()!;
+      const choice = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]![0];
+      return {
+        answers: { destination: { choice, probabilities, confidence: 0.5 }, human: { noul: 0.9 } },
+        usage: { input_tokens: Object.keys(input.questions.destination.criteria).length * 10, output_tokens: 0 },
+      };
+    });
+    const d = await resolveRoute({ run }, manifest, { path: "/team-page" }, { rerankSize: 3 });
+    expect(d).toMatchObject({ kind: "ai", to: "/about", rounds: 2, confidence: 0.8 });
+    expect(Object.keys(run.mock.calls[1]![1].questions.destination.criteria)).toEqual([
+      "/about", "/pricing", "/docs/getting-started", NONE,
+    ]);
+    expect(d.usage).toEqual({ input_tokens: 60 + 40, output_tokens: 0 });
+
+    const once = await resolveRoute(fakeAi({ "/about": 0.35, "/pricing": 0.2, [NONE]: 0.45 }), manifest, { path: "/x-y" }, { rerank: false });
+    expect(once.rounds).toBeUndefined();
   });
 
   it("misses when Clef says none", async () => {
@@ -140,9 +199,12 @@ describe("resolveRoute", () => {
       .toMatchObject({ kind: "normalized", to: "/pricing" });
     expect(ai.run).not.toHaveBeenCalled();
 
+    // The typo fix and Clef land on the twin too.
+    expect(await resolveRoute(ai, withTwin, { path: "/priceing", markdown: true }))
+      .toMatchObject({ kind: "typo", to: "/pricing.md" });
     const clef = fakeAi({ "/pricing": 0.9, [NONE]: 0.1 });
-    expect(await resolveRoute(clef, withTwin, { path: "/priceing", markdown: true }))
-      .toMatchObject({ kind: "ai", to: "/pricing.md" });
+    expect(await resolveRoute(clef, withTwin, { path: "/plans", markdown: true, search: "?ref=x" }))
+      .toMatchObject({ kind: "ai", to: "/pricing.md?ref=x" });
   });
 
   it("skips a Markdown version that is in the manifest but 404'd", async () => {

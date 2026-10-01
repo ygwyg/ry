@@ -27,6 +27,10 @@ describe("manifest", () => {
     );
     expect(info).toEqual({ title: "Pricing & plans", description: "What it costs", noindex: false });
     expect(extractPageInfo(`<meta name="robots" content="noindex">`).noindex).toBe(true);
+    expect(
+      extractPageInfo(`<nav><p>Skip</p></nav><main><p>Short.</p><p>Store <b>large objects</b> without paying for egress bandwidth.</p></main>`)
+        .description,
+    ).toBe("Store large objects without paying for egress bandwidth.");
     expect(extractPageInfo(`<meta name="description" content="We're hiring">`).description).toBe("We're hiring");
     expect(extractPageInfo(`<meta name='description' content='Say "hi"'>`).description).toBe('Say "hi"');
   });
