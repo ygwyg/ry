@@ -1,0 +1,17 @@
+{
+  "name": "route-yes-example-vite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build && wrangler dev",
+    "deploy": "vite build && wrangler deploy"
+  },
+  "dependencies": {
+    "route-yes": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "wrangler": "^4.30.0"
+  }
+}

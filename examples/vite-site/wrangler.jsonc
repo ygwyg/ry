@@ -1,0 +1,13 @@
+{
+  "name": "route-yes-example",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // Must be "none": with "404-page" or "single-page-application", misses are
+    // answered by the assets layer and never reach the Worker.
+    "not_found_handling": "none"
+  },
+  "ai": { "binding": "AI" }
+}
