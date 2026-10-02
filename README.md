@@ -50,7 +50,7 @@ npm i route-yes
 | Astro | `integrations: [routeYes()]` from `route-yes/astro` |
 | Anything else | `npx route-yes manifest dist` after your build |
 
-The Vite plugin reads built HTML, `sitemap*.xml`, and TanStack's `routeTree.gen.ts`. Add pages it can't see with `routeYes({ routes: ["/pricing"] })`.
+The Vite plugin reads built HTML, `sitemap*.xml`, `llms.txt`, Markdown versions of pages (`pricing.md` beside `pricing.html`), and TanStack's `routeTree.gen.ts`. Add pages it can't see with `routeYes({ routes: ["/pricing"] })`.
 
 **2. Route 404s in your Worker.**
 
@@ -99,10 +99,20 @@ const decision = await routeYes({ navigate: (to) => navigate({ to, replace: true
 
 Add `"run_worker_first": ["/_route-yes/*"]` to `assets` so those requests reach the Worker.
 
+### Agents
+
+Agents miss pages too, and they don't ask the way browsers do. ry routes a request when it's a page navigation, when its `Accept` header puts `text/markdown` ahead of `text/html`, or when it's for a `.md` path. For those requests:
+
+- **Redirects go to the Markdown version** of the page when your build has one.
+- **"Did you mean" comes back as Markdown**, linking each page's Markdown version where there is one.
+- **Every 404 ry handles links to your sitemap and `llms.txt`** in a `Link` header, when your build has them.
+
+Links in `llms.txt` count as your pages when they're relative or on your sitemap's host. Without a sitemap, pass `routeYes({ site: "https://example.com" })`. A `.md` link with no HTML page behind it only receives Markdown requests; a browser is never sent there.
+
 ## How ry decides
 
-1. **Fix the easy ones.** Differences in case, slashes, `.html`, or `/index` get a 301.
-2. **Skip the noise.** Asset requests and obvious probes (`.env`, `.php`, `wp-admin`) keep their 404.
+1. **Fix the easy ones.** Differences in case, slashes, `.html`, `.md`, or `/index` get a 301.
+2. **Skip the noise.** Asset requests, obvious probes (`.env`, `.php`, `wp-admin`), and repository files (`README.md`, `CHANGELOG.md`, `LICENSE.md`) keep their 404.
 3. **Fix typos.** A URL one or two keystrokes from exactly one page redirects immediately.
 4. **Shortlist.** On sites with more than 60 pages, ry picks the 60 likeliest by spelling and by meaning (Workers AI embeddings), so `/jobs` still finds `/careers`.
 5. **Ask Clef** which page the visitor meant (or none), and whether they look like a person.

@@ -34,6 +34,8 @@ describe("normalizePath", () => {
     ["/about.html", "/about"],
     ["//docs//getting-started/", "/docs/getting-started"],
     ["/blog/index.html", "/blog"],
+    ["/About.md", "/about"],
+    ["/docs/index.md", "/docs"],
     ["/%41bout", "/about"],
     ["/", "/"],
   ])("%s → %s", (input, out) => expect(normalizePath(input)).toBe(out));
@@ -45,6 +47,14 @@ describe("skipReason", () => {
     expect(skipReason("/.env")).toBeTruthy();
     expect(skipReason("/assets/app.js")).toBeTruthy();
     expect(skipReason("/abuot")).toBeUndefined();
+  });
+
+  it("skips repository files scanners probe for", () => {
+    expect(skipReason("/README.md")).toBe("repository file");
+    expect(skipReason("/vendor/acme/CHANGELOG.md")).toBe("repository file");
+    expect(skipReason("/LICENSE.md")).toBe("repository file");
+    expect(skipReason("/readme-first.md")).toBeUndefined();
+    expect(skipReason("/changelog")).toBeUndefined();
   });
 });
 
@@ -176,6 +186,91 @@ describe("resolveRoute", () => {
     const d = await resolveRoute(ai, manifest, { path: "/about" });
     expect(d.kind).toBe("skip");
     expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it("sends a Markdown request to the page's Markdown version", async () => {
+    const withTwin: Manifest = {
+      version: "md",
+      routes: [
+        { path: "/pricing", title: "Pricing", markdown: "/pricing.md" },
+        { path: "/about", title: "About" },
+      ],
+    };
+    const ai = fakeAi({});
+    expect(await resolveRoute(ai, withTwin, { path: "/Pricing.md", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/pricing.md" });
+    // No twin: the page itself is still the right answer.
+    expect(await resolveRoute(ai, withTwin, { path: "/About.md", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/about" });
+    // A browser asking for the same misspelling gets the HTML page.
+    expect(await resolveRoute(ai, withTwin, { path: "/Pricing/" }))
+      .toMatchObject({ kind: "normalized", to: "/pricing" });
+    expect(ai.run).not.toHaveBeenCalled();
+
+    // The typo fix and Clef land on the twin too.
+    expect(await resolveRoute(ai, withTwin, { path: "/priceing", markdown: true }))
+      .toMatchObject({ kind: "typo", to: "/pricing.md" });
+    const clef = fakeAi({ "/pricing": 0.9, [NONE]: 0.1 });
+    expect(await resolveRoute(clef, withTwin, { path: "/plans", markdown: true, search: "?ref=x" }))
+      .toMatchObject({ kind: "ai", to: "/pricing.md?ref=x" });
+  });
+
+  it("still sends a repository file to a real page of the same name", async () => {
+    const ai = fakeAi({});
+    const site: Manifest = { version: "changelog", routes: [{ path: "/changelog", title: "Changelog" }] };
+    expect(await resolveRoute(ai, site, { path: "/CHANGELOG.md", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/changelog" });
+    expect(await resolveRoute(ai, site, { path: "/README.md", markdown: true }))
+      .toMatchObject({ kind: "skip", reason: "repository file" });
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it("only sends Markdown requests to a Markdown-only route", async () => {
+    const site: Manifest = {
+      version: "md-only",
+      routes: [
+        { path: "/docs/agents", title: "Agent guide", markdown: "/docs/agents.md", markdownOnly: true },
+        { path: "/docs/api", title: "API reference" },
+      ],
+    };
+    const ai = fakeAi({});
+    expect(await resolveRoute(ai, site, { path: "/docs/agent", markdown: true }))
+      .toMatchObject({ kind: "typo", to: "/docs/agents.md" });
+    expect(await resolveRoute(ai, site, { path: "/Docs/Agents/", markdown: true }))
+      .toMatchObject({ kind: "normalized", to: "/docs/agents.md" });
+    expect(ai.run).not.toHaveBeenCalled();
+
+    // A browser is never redirected there, and Clef is never offered it.
+    const clef = fakeAi({ "/docs/api": 0.05, [NONE]: 0.95 });
+    const d = await resolveRoute(clef, site, { path: "/docs/agents" });
+    expect(d).toMatchObject({ kind: "miss" });
+    expect(d.to).toBeUndefined();
+    const criteria = clef.run.mock.calls[0]![1].questions.destination.criteria;
+    expect(Object.keys(criteria)).toEqual(["/docs/api", NONE]);
+  });
+
+  it("suggests Markdown versions to a Markdown request", async () => {
+    const site: Manifest = {
+      version: "md-suggest",
+      routes: [
+        { path: "/about", title: "About" },
+        { path: "/pricing", title: "Pricing", markdown: "/pricing.md" },
+      ],
+    };
+    const clef = () => fakeAi({ "/about": 0.4, "/pricing": 0.35, [NONE]: 0.25 });
+    const md = await resolveRoute(clef(), site, { path: "/company", markdown: true });
+    expect(md.suggestions.map((s) => s.path)).toEqual(["/about", "/pricing.md"]);
+    const html = await resolveRoute(clef(), site, { path: "/company" });
+    expect(html.suggestions.map((s) => s.path)).toEqual(["/about", "/pricing"]);
+  });
+
+  it("skips a Markdown version that is in the manifest but 404'd", async () => {
+    const ai = fakeAi({});
+    const d = await resolveRoute(ai, { version: "md", routes: [{ path: "/pricing", markdown: "/pricing.md" }] }, {
+      path: "/pricing.md",
+      markdown: true,
+    });
+    expect(d).toMatchObject({ kind: "skip", reason: "path is in manifest" });
   });
 
   it("unwraps REST-style responses", async () => {
