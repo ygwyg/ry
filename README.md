@@ -104,15 +104,15 @@ Add `"run_worker_first": ["/_route-yes/*"]` to `assets` so those requests reach 
 Agents miss pages too, and they don't ask the way browsers do. ry routes a request when it's a page navigation, when its `Accept` header puts `text/markdown` ahead of `text/html`, or when it's for a `.md` path. For those requests:
 
 - **Redirects go to the Markdown version** of the page when your build has one.
-- **"Did you mean" comes back as Markdown**, not as an HTML page.
+- **"Did you mean" comes back as Markdown**, linking each page's Markdown version where there is one.
 - **Every 404 ry handles links to your sitemap and `llms.txt`** in a `Link` header, when your build has them.
 
-Links in `llms.txt` count as your pages when they're relative or on your sitemap's host. Without a sitemap, pass `routeYes({ site: "https://example.com" })`.
+Links in `llms.txt` count as your pages when they're relative or on your sitemap's host. Without a sitemap, pass `routeYes({ site: "https://example.com" })`. A `.md` link with no HTML page behind it only receives Markdown requests; a browser is never sent there.
 
 ## How ry decides
 
 1. **Fix the easy ones.** Differences in case, slashes, `.html`, `.md`, or `/index` get a 301.
-2. **Skip the noise.** Asset requests and obvious probes (`.env`, `.php`, `wp-admin`) keep their 404.
+2. **Skip the noise.** Asset requests, obvious probes (`.env`, `.php`, `wp-admin`), and repository files (`README.md`, `CHANGELOG.md`, `LICENSE.md`) keep their 404.
 3. **Fix typos.** A URL one or two keystrokes from exactly one page redirects immediately.
 4. **Shortlist.** On sites with more than 60 pages, ry picks the 60 likeliest by spelling and by meaning (Workers AI embeddings), so `/jobs` still finds `/careers`.
 5. **Ask Clef** which page the visitor meant (or none), and whether they look like a person.

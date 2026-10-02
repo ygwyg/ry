@@ -139,6 +139,15 @@ export async function resolveRoute(
   opts: ResolveOptions = {},
 ): Promise<Decision> {
   const base = { from: req.path, confidence: 0, suggestions: [] as Suggestion[] };
+  // A Markdown-only route has no page a browser could land on.
+  if (!req.markdown && manifest.routes.some((r) => r.markdownOnly)) {
+    // Its own version, since the shortlist caches route embeddings per version.
+    manifest = {
+      ...manifest,
+      version: `${manifest.version}:html`,
+      routes: manifest.routes.filter((r) => !r.markdownOnly),
+    };
+  }
   const routes = manifest.routes;
 
   if (routes.some((r) => r.path === req.path || r.markdown === req.path)) {
@@ -222,7 +231,10 @@ export async function resolveRoute(
         : ranked
             .filter(([, p]) => p >= 0.1)
             .slice(0, opts.maxSuggestions ?? DEFAULTS.maxSuggestions)
-            .map(([path, probability]) => ({ path, title: byPath.get(path)?.title, probability }));
+            .map(([path, probability]) => {
+              const route = byPath.get(path)!;
+              return { path: pathFor(route, req), title: route.title, probability };
+            });
     if (suggestions.length === 0 && fallbackSuggestions) suggestions = fallbackSuggestions;
 
     const confidence = dest.probabilities[dest.choice] ?? 0;

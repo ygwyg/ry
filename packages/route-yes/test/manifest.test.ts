@@ -83,7 +83,7 @@ export interface FileRoutesByTo {}`;
 - [Status](//status.acme.dev)
 `;
     expect(parseLlmsTxt(llms, "https://acme.dev")).toEqual([
-      { path: "/pricing", title: "Pricing", description: "Plans and billing", markdown: "/pricing.md" },
+      { path: "/pricing", title: "Pricing", description: "Plans and billing", markdown: "/pricing.md", markdownOnly: true },
       { path: "/docs/getting-started", title: "Getting started", description: undefined },
     ]);
     // Without knowing the site's origin, only relative links count.
@@ -102,12 +102,14 @@ export interface FileRoutesByTo {}`;
     await writeFile(join(dir, "sitemap.xml"), "<urlset><url><loc>https://acme.dev/pricing</loc></url></urlset>");
     await writeFile(
       join(dir, "llms.txt"),
-      "# Acme\n\n- [Plans](https://acme.dev/pricing): What it costs\n- [Changelog](https://acme.dev/changelog.md)\n",
+      "# Acme\n\n- [Plans](https://acme.dev/pricing): What it costs\n- [Changelog](https://acme.dev/changelog.md)\n- [Docs](/docs/index.md)\n",
     );
 
     const m = await buildManifest({ outDir: dir });
     expect(m.routes).toEqual([
-      { path: "/changelog", title: "Changelog", markdown: "/changelog.md" },
+      // Only in llms.txt, as Markdown: no HTML page, so browsers are never sent here.
+      { path: "/changelog", title: "Changelog", markdown: "/changelog.md", markdownOnly: true },
+      // In llms.txt as Markdown, but the crawl found the page.
       { path: "/docs/", title: "Docs", markdown: "/docs/index.md" },
       // The page's own <title> wins; llms.txt fills in the description.
       { path: "/pricing", title: "Pricing", description: "What it costs", markdown: "/pricing.md" },

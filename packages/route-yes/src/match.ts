@@ -37,10 +37,15 @@ const ASSET_EXT =
 const PROBE =
   /(?:^|\/)(?:\.env|\.git|\.aws|\.ssh|\.ds_store|wp-admin|wp-login|wp-content|wp-includes|xmlrpc|phpmyadmin|cgi-bin|vendor\/phpunit|actuator|server-status)|\.(?:php\d?|asp|aspx|jsp|cgi|env|ini|bak|sql|yml|yaml|config)$/i;
 
+// Repository boilerplate scanners fetch from every site. A site that has one
+// as a real page matches it before this check runs.
+const REPO_FILE = /(?:^|\/)(?:readme|changelog|changes|history|license|licence|contributing|security|code_of_conduct|authors|todo)\.md$/i;
+
 /** Return a reason to skip AI routing for this path, or undefined to proceed. */
 export function skipReason(path: string): string | undefined {
   if (path.length > 512) return "path too long";
   if (PROBE.test(path)) return "looks like a bot probe";
+  if (REPO_FILE.test(path)) return "repository file";
   if (ASSET_EXT.test(path)) return "asset request";
   return undefined;
 }

@@ -129,7 +129,8 @@ export async function findMarkdownTwins(outDir: string): Promise<Map<string, str
  * Discover routes from an `llms.txt` file (https://llmstxt.org): every list
  * item of the form `- [Title](url): description`. Links to other sites are
  * left out; pass `site` so absolute links to this one count. A link to a
- * `.md` file becomes the page it describes, with `markdown` set.
+ * `.md` file becomes the page it describes, with `markdown` set and
+ * `markdownOnly` until another source shows an HTML page lives there.
  */
 export function parseLlmsTxt(text: string, site?: string): RouteEntry[] {
   const host = site ? safeUrl(site)?.host : undefined;
@@ -149,7 +150,7 @@ export function parseLlmsTxt(text: string, site?: string): RouteEntry[] {
       path: isMarkdown ? markdownToPage(path) : path,
       title: clean(title, 120),
       description: clean(description, 200),
-      ...(isMarkdown ? { markdown: path } : {}),
+      ...(isMarkdown ? { markdown: path, markdownOnly: true } : {}),
     });
   }
   return routes;
@@ -206,17 +207,22 @@ function versionOf(routes: RouteEntry[]) {
   return createHash("sha256").update(JSON.stringify(routes)).digest("hex").slice(0, 12);
 }
 
-/** Merge route lists, letting later entries fill in or override earlier ones. */
+/**
+ * Merge route lists, letting later entries fill in or override earlier ones.
+ * A route stays `markdownOnly` only if every source that names it says so.
+ */
 export function mergeRoutes(...lists: RouteEntry[][]): RouteEntry[] {
   const byPath = new Map<string, RouteEntry>();
   for (const list of lists) {
     for (const r of list) {
       const prev = byPath.get(r.path);
+      const markdownOnly = !!r.markdownOnly && (!prev || !!prev.markdownOnly);
       byPath.set(r.path, {
         path: r.path,
         title: r.title ?? prev?.title,
         description: r.description ?? prev?.description,
         ...((r.markdown ?? prev?.markdown) ? { markdown: r.markdown ?? prev?.markdown } : {}),
+        ...(markdownOnly ? { markdownOnly } : {}),
       });
     }
   }
@@ -285,7 +291,9 @@ export async function buildManifest(opts: ManifestOptions): Promise<Manifest> {
   const routes = stripSiteSuffix(
     mergeRoutes(...lists)
       .filter((r) => r.path.startsWith("/") && !exclude.some((x) => r.path.startsWith(x)))
-      // A Markdown file only becomes a twin of a page that exists; it never adds a route.
+      // A Markdown file in outDir only becomes a twin of a page that exists. A
+      // .md link in llms.txt with no page behind it stays markdownOnly, so
+      // only Markdown requests are ever sent there.
       .map((r) => {
         const twin = r.markdown ?? twins.get(normalizePath(r.path));
         return twin ? { ...r, markdown: twin } : r;

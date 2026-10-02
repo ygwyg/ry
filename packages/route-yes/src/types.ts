@@ -11,6 +11,11 @@ export interface RouteEntry {
    * publishes one. Requests that ask for Markdown are sent here instead.
    */
   markdown?: string;
+  /**
+   * The route exists only as Markdown (`markdown`); no HTML page lives at
+   * `path`. Only requests that ask for Markdown are sent here or shown it.
+   */
+  markdownOnly?: boolean;
 }
 
 /** The set of routes route-yes is allowed to send visitors to. */

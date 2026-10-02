@@ -159,7 +159,7 @@ describe("withRouteYes", () => {
     expect(miss.headers.get("link")).toBe('</sitemap.xml>; rel="sitemap", </llms.txt>; rel="alternate"; type="text/plain"');
     const body = await miss.text();
     expect(body).toContain("- [About](/about)");
-    expect(body).toContain("- [Pricing](/pricing)");
+    expect(body).toContain("- [Pricing](/pricing.md)");
   });
 
   it("routes a .md path whatever the Accept header says", async () => {
@@ -169,6 +169,15 @@ describe("withRouteYes", () => {
     });
     const res = await worker.fetch(new Request("https://example.com/PRICING.md", { headers: { accept: "*/*" } }), env({}), ctx);
     expect(res.headers.get("location")).toBe("/pricing.md");
+  });
+
+  it("passes repository files through without asking Clef", async () => {
+    const e = env({ "/about": 0.9, [NONE]: 0.1 });
+    const worker = withRouteYes(undefined, { manifest: { ...manifest, version: "repo-file" }, cacheTtl: 0 });
+    const res = await worker.fetch(new Request("https://example.com/README.md", { headers: { accept: "*/*" } }), e, ctx);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("x-route-yes")).toContain("skip");
+    expect(e.AI.run).not.toHaveBeenCalled();
   });
 
   it("keeps browser and Markdown answers for one path apart in the cache", async () => {
