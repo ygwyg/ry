@@ -117,6 +117,15 @@ function withSearch(path: string, search?: string) {
   return search && search !== "?" ? path + search : path;
 }
 
+/** The route's Markdown version if this request asked for one and one exists, else the page. */
+function pathFor(route: RouteEntry, req: RouteRequest) {
+  return req.markdown && route.markdown ? route.markdown : route.path;
+}
+
+function targetOf(route: RouteEntry, req: RouteRequest) {
+  return withSearch(pathFor(route, req), req.search);
+}
+
 /**
  * Decide where a request for a missing path should go.
  *
@@ -130,9 +139,18 @@ export async function resolveRoute(
   opts: ResolveOptions = {},
 ): Promise<Decision> {
   const base = { from: req.path, confidence: 0, suggestions: [] as Suggestion[] };
+  // A Markdown-only route has no page a browser could land on.
+  if (!req.markdown && manifest.routes.some((r) => r.markdownOnly)) {
+    // Its own version, since the shortlist caches route embeddings per version.
+    manifest = {
+      ...manifest,
+      version: `${manifest.version}:html`,
+      routes: manifest.routes.filter((r) => !r.markdownOnly),
+    };
+  }
   const routes = manifest.routes;
 
-  if (routes.some((r) => r.path === req.path)) {
+  if (routes.some((r) => r.path === req.path || r.markdown === req.path)) {
     // The route exists but still 404'd: stale manifest. Never redirect to itself.
     return { ...base, kind: "skip", reason: "path is in manifest" };
   }
@@ -142,7 +160,7 @@ export async function resolveRoute(
     return {
       ...base,
       kind: "normalized",
-      to: withSearch(exact.path, req.search),
+      to: targetOf(exact, req),
       confidence: 1,
     };
   }
@@ -153,7 +171,7 @@ export async function resolveRoute(
   if (opts.typoFix !== false) {
     const typo = findTypoMatch(req.path, routes);
     if (typo) {
-      return { ...base, kind: "typo", to: withSearch(typo.path, req.search), confidence: 1 };
+      return { ...base, kind: "typo", to: targetOf(typo, req), confidence: 1 };
     }
   }
   if (routes.length === 0) return { ...base, kind: "skip", reason: "no routes" };
@@ -213,7 +231,10 @@ export async function resolveRoute(
         : ranked
             .filter(([, p]) => p >= 0.1)
             .slice(0, opts.maxSuggestions ?? DEFAULTS.maxSuggestions)
-            .map(([path, probability]) => ({ path, title: byPath.get(path)?.title, probability }));
+            .map(([path, probability]) => {
+              const route = byPath.get(path)!;
+              return { path: pathFor(route, req), title: route.title, probability };
+            });
     if (suggestions.length === 0 && fallbackSuggestions) suggestions = fallbackSuggestions;
 
     const confidence = dest.probabilities[dest.choice] ?? 0;
@@ -234,6 +255,6 @@ export async function resolveRoute(
     if (confidence < (opts.minConfidence ?? DEFAULTS.minConfidence) && !dominant) {
       return { ...common, kind: "miss", reason: "low confidence" };
     }
-    return { ...common, kind: "ai", to: dest.choice };
+    return { ...common, kind: "ai", to: pathFor(byPath.get(dest.choice)!, req) };
   }
 }

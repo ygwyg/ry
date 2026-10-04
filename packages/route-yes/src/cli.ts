@@ -10,8 +10,8 @@ import type { ClefModel, Manifest } from "./types.js";
 const USAGE = `route-yes — AI routing for 404s, powered by Cloudflare Clef
 
 Usage:
-  route-yes manifest <outDir> [--route /path]... [--exclude /prefix]... [--tanstack src/routeTree.gen.ts]
-      Write <outDir>/route-yes.json from built HTML, sitemap.xml, and extra routes.
+  route-yes manifest <outDir> [--route /path]... [--exclude /prefix]... [--tanstack src/routeTree.gen.ts] [--site https://example.com]
+      Write <outDir>/route-yes.json from built HTML, sitemap.xml, llms.txt, Markdown pages, and extra routes.
 
   route-yes try <path> [--manifest dist/route-yes.json] [--model clef|clef-flash]
       Ask Clef where <path> should go. Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.
@@ -24,6 +24,7 @@ async function main() {
       route: { type: "string", multiple: true },
       exclude: { type: "string", multiple: true },
       tanstack: { type: "string" },
+      site: { type: "string" },
       manifest: { type: "string", default: "dist/route-yes.json" },
       model: { type: "string", default: "clef-flash" },
       help: { type: "boolean", short: "h" },
@@ -42,6 +43,7 @@ async function main() {
       routes: values.route,
       exclude: values.exclude,
       tanstackRouteTree: values.tanstack && resolve(values.tanstack),
+      site: values.site,
     });
     console.log(`route-yes: ${manifest.routes.length} routes → ${file}`);
     return;

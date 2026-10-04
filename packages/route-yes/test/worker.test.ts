@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NONE } from "../src/resolve.js";
 import type { Manifest } from "../src/types.js";
-import { withRouteYes } from "../src/worker.js";
+import { prefersMarkdown, withRouteYes } from "../src/worker.js";
 
 const manifest: Manifest = {
   version: "w1",
@@ -119,6 +119,93 @@ describe("withRouteYes", () => {
       ctx,
     );
     expect(cross.status).toBe(403);
+  });
+
+  it("decides from Accept whether Markdown is wanted", () => {
+    expect(prefersMarkdown("text/markdown")).toBe(true);
+    // Claude Code and other agents list Markdown first at equal weight.
+    expect(prefersMarkdown("text/markdown, text/html, */*")).toBe(true);
+    expect(prefersMarkdown("text/html, text/markdown")).toBe(false);
+    expect(prefersMarkdown("text/html;q=0.5, text/markdown;q=0.9")).toBe(true);
+    expect(prefersMarkdown("text/markdown;q=0, text/plain")).toBe(false);
+    // A wildcard expresses no preference between the two.
+    expect(prefersMarkdown("*/*")).toBe(false);
+    expect(prefersMarkdown("text/html,application/xhtml+xml,*/*;q=0.8")).toBe(false);
+    expect(prefersMarkdown(null)).toBe(false);
+  });
+
+  it("routes agents that ask for Markdown, and answers them in Markdown", async () => {
+    const withTwin: Manifest = {
+      version: "agents",
+      routes: [
+        { path: "/about", title: "About" },
+        { path: "/pricing", title: "Pricing", markdown: "/pricing.md" },
+      ],
+      discovery: { sitemap: "/sitemap.xml", llmsTxt: "/llms.txt" },
+    };
+    const worker = withRouteYes(undefined, { manifest: withTwin, cacheTtl: 0 });
+    const agent = (path: string) =>
+      new Request(`https://example.com${path}`, { headers: { accept: "text/markdown" } });
+
+    // Never mentions HTML, never sends Sec-Fetch-Mode: still routed.
+    const redirect = await worker.fetch(agent("/Pricing"), env({}), ctx);
+    expect(redirect.status).toBe(301);
+    expect(redirect.headers.get("location")).toBe("/pricing.md");
+
+    const e = env({ "/about": 0.4, "/pricing": 0.35, [NONE]: 0.25 });
+    const miss = await worker.fetch(agent("/company"), e, ctx);
+    expect(miss.status).toBe(404);
+    expect(miss.headers.get("content-type")).toContain("text/markdown");
+    expect(miss.headers.get("link")).toBe('</sitemap.xml>; rel="sitemap", </llms.txt>; rel="alternate"; type="text/plain"');
+    const body = await miss.text();
+    expect(body).toContain("- [About](/about)");
+    expect(body).toContain("- [Pricing](/pricing.md)");
+  });
+
+  it("routes a .md path whatever the Accept header says", async () => {
+    const worker = withRouteYes(undefined, {
+      manifest: { version: "md-path", routes: [{ path: "/pricing", markdown: "/pricing.md" }] },
+      cacheTtl: 0,
+    });
+    const res = await worker.fetch(new Request("https://example.com/PRICING.md", { headers: { accept: "*/*" } }), env({}), ctx);
+    expect(res.headers.get("location")).toBe("/pricing.md");
+  });
+
+  it("passes repository files through without asking Clef", async () => {
+    const e = env({ "/about": 0.9, [NONE]: 0.1 });
+    const worker = withRouteYes(undefined, { manifest: { ...manifest, version: "repo-file" }, cacheTtl: 0 });
+    const res = await worker.fetch(new Request("https://example.com/README.md", { headers: { accept: "*/*" } }), e, ctx);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("x-route-yes")).toContain("skip");
+    expect(e.AI.run).not.toHaveBeenCalled();
+  });
+
+  it("keeps browser and Markdown answers for one path apart in the cache", async () => {
+    const withTwin: Manifest = {
+      version: "split-cache",
+      routes: [{ path: "/pricing", title: "Pricing", markdown: "/pricing.md" }],
+    };
+    const worker = withRouteYes(undefined, { manifest: withTwin });
+    const e = env({ "/pricing": 0.9, [NONE]: 0.1 });
+    const html = await worker.fetch(nav("/priceing"), e, ctx);
+    const md = await worker.fetch(
+      new Request("https://example.com/priceing", { headers: { accept: "text/markdown" } }),
+      e,
+      ctx,
+    );
+    expect(html.headers.get("location")).toBe("/pricing");
+    expect(md.headers.get("location")).toBe("/pricing.md");
+  });
+
+  it("links a browser's 404 to the site's indexes too", async () => {
+    const e = env({ "/about": 0.02, [NONE]: 0.98 });
+    const res = await withRouteYes(undefined, {
+      manifest: { ...manifest, version: "links", discovery: { sitemap: "/sitemap.xml" } },
+      cacheTtl: 0,
+    }).fetch(nav("/zzz"), e, ctx);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("link")).toBe('</sitemap.xml>; rel="sitemap"');
+    expect(await res.text()).toBe("<h1>Not found</h1>");
   });
 
   it("keeps other handler exports", async () => {

@@ -3,6 +3,17 @@ import type { Decision } from "./types.js";
 const escape = (s: string) =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** Escape the characters that would end a Markdown link's text early. */
+const mdText = (s: string) => s.replace(/[\\[\]]/g, (c) => `\\${c}`);
+
+/** The same "did you mean" answer as Markdown, for agents that asked for it. */
+export function renderSuggestMarkdown(decision: Decision): string {
+  const items = decision.suggestions
+    .map((s) => `- [${mdText(s.title || s.path)}](${encodeURI(s.path)})`)
+    .join("\n");
+  return `# Page not found\n\nNothing lives at \`${decision.from.replace(/`/g, "")}\`. Were you looking for one of these?\n\n${items}\n`;
+}
+
 /** A minimal, self-contained "did you mean" 404 page. */
 export function renderSuggestPage(decision: Decision): string {
   const items = decision.suggestions
